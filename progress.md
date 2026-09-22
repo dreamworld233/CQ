@@ -132,11 +132,28 @@
 ## 五问重启检查
 | 问题 | 答案 |
 |------|------|
-| 我在哪里？ | T3–T6 文件完成（4 subagent），待 Unity 编译 + NUnit，然后进 T7 集成 |
-| 我要去哪里？ | 剩余实现阶段 |
+| 我在哪里？ | T1–T9 全完成；60 个 EditMode 测试全绿（用户确认）；本地已提交，远端用户自行 push |
+| 我要去哪里？ | T10 2.5D 表现（常驻左行动条 / 前后排站位 / 意图图标 / 手牌），替换现在 IMGUI 临时 UI |
 | 目标是什么？ | 2 周可玩可讲的 2.5D 回合制垂直切片 |
 | 我学到了什么？ | 见 findings.md |
-| 我做了什么？ | 两轮修订计划，定微细节 |
+| 我做了什么？ | 战斗闭环跑通（BattleEngine 编 Book），level1/2 教学点成立 |
+
+## 下次继续（从这开始）
+- 命令行恢复：读 `progress.md` 本表 + `tasks.md` 勾选（`[x]`=done）确认进度，再读 `task_plan.md` 第 2 周 T10 细节。
+- 下一步 = **T10 2.5D 表现**：`Runtime/UnitView.cs`、`PositioningView.cs`（前后排站位）、`ActionBarUI.cs`（左侧常驻出手顺序条）、`IntentIconUI.cs`、`HandUI.cs`、`CameraController.cs`。当前 `BattleController` 是 IMGUI 临时桥，T10 换成 Scene/UGUI 或 2D Renderer 表现层，BattleEngine（Core）不动。
+- 已约：常驻行动条本次要补（用户明确提出）。
+- 剩余：T10–T14（表现/打磨/回归/录屏讲稿/缓冲）。
+- git 分工：本地 `git commit` 由我执行，远端 push 由用户本地完成。
+
+## 提交记录（本次会话）
+| 提交 | 内容 |
+|------|------|
+| 9875b46 | T1 脚手架 + 数据驱动 + EditMode 测试 |
+| (T2) | T2 回合骨架 + 战斗共享契约 |
+| (T3-T6) | 角色技能/敌人意图/目标选择/卡牌/状态（4 subagent） |
+| 97e1331 | T7 串联闭环 + 最小可玩场景 |
+| e7e925e | T8 数值配平 + 教学点测试 |
+| ab6db4a | T9 意图完整结算 + 存牌爆发点验证 |
 
 ---
 
