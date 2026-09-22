@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using CQ.Core.Battle;
 using CQ.Core.Combat;
 using CQ.Core.Config;
@@ -9,8 +8,9 @@ using UnityEngine;
 namespace CQ.Runtime
 {
     /// <summary>
-    /// 最小可玩场景桥接（T7）：加载配置 → 建 BattleEngine → IMGUI 交互（选招/打牌/结束回合/重开）。
-    /// 临时表现，正式 2.5D 表现在 T10。
+    /// 场景驱动桥接（T10）：加载配置 → 建 BattleEngine → 生成世界单位（前后排站位）→
+    /// IMGUI HUD（左侧常驻行动条 / 手牌 / 技能 / 意图 / 结束回合）。
+    /// BattleEngine 是唯一战斗状态源；表现层只读、只发指令。
     /// </summary>
     public class BattleController : MonoBehaviour
     {
@@ -18,15 +18,30 @@ namespace CQ.Runtime
         [SerializeField] private int levelId = 1;
 
         private BattleEngine _engine;
+        private readonly Dictionary<string, UnitView> _views = new Dictionary<string, UnitView>();
         private string _selectedActor;
         private string _selectedTarget;
         private string _lastEvent = "";
         private string _configError;
+        private Transform _worldRoot;
 
         private void Start()
         {
+            EnsureCamera();
             NewBattle();
         }
+
+        private void EnsureCamera()
+        {
+            if (Camera.main != null) return;
+            var cam = new GameObject("Main Camera").AddComponent<Camera>();
+            cam.orthographic = true;
+            cam.orthographicSize = 5f;
+            cam.transform.position = new Vector3(0f, 0f, -10f);
+            cam.tag = "MainCamera";
+        }
+
+        // ---------- 建局 ----------
 
         private void NewBattle()
         {
@@ -41,10 +56,10 @@ namespace CQ.Runtime
             if (errors > 0)
             {
                 _configError = "配置错误，查看 Console";
-                foreach (var e in chars.errors) Debug.LogError("[角色] " + e);
-                foreach (var e in enemies.errors) Debug.LogError("[敌人] " + e);
-                foreach (var e in cards.errors) Debug.LogError("[卡] " + e);
-                foreach (var e in levels.errors) Debug.LogError("[关卡] " + e);
+                DumpErrors("角色", chars.errors);
+                DumpErrors("敌人", enemies.errors);
+                DumpErrors("卡", cards.errors);
+                DumpErrors("关卡", levels.errors);
                 return;
             }
 
@@ -55,13 +70,103 @@ namespace CQ.Runtime
                 return;
             }
 
-            var enemyCatalog = enemies.items.ToDictionary(e => e.id);
-            _engine = BattleEngine.Create(seed, chars.items, level.waves[0].enemies, enemyCatalog, cards.items);
+            var catalog = enemies.items.ToDictionary(e => e.id);
+            _engine = BattleEngine.Create(seed, chars.items, level.waves[0].enemies, catalog, cards.items);
             _engine.StartBattle();
 
             _selectedActor = _engine.Players.FirstOrDefault(p => !p.IsDead)?.Id;
             _selectedTarget = _engine.Enemies.FirstOrDefault(e => !e.IsDead)?.Id;
+
+            SpawnWorld();
+            RefreshWorld();
             Log("开战：" + level.name);
+        }
+
+        private void SpawnWorld()
+        {
+            if (_worldRoot != null) Destroy(_worldRoot.gameObject);
+            _views.Clear();
+            _worldRoot = new GameObject("BattleWorld").transform;
+            _worldRoot.SetParent(transform, false);
+
+            int slot = 0;
+            foreach (var p in _engine.Players) SpawnUnit(p, slot++);
+            slot = 0;
+            foreach (var e in _engine.Enemies) SpawnUnit(e, slot++);
+        }
+
+        private void SpawnUnit(Unit unit, int slot)
+        {
+            var go = new GameObject("Unit_" + unit.Id);
+            go.transform.SetParent(_worldRoot, false);
+            go.transform.position = PositioningView.Position(unit, slot);
+            go.transform.localScale = Vector3.one * 1.3f;
+
+            var view = go.AddComponent<UnitView>();
+            view.Setup(unit, UnitColor(unit, unit.IsDead));
+            _views[unit.Id] = view;
+        }
+
+        private static Color UnitColor(Unit unit, bool dead)
+        {
+            if (dead) return Color.gray;
+            Color c = unit.Team == Team.Player ? new Color(0.30f, 0.85f, 0.90f) : new Color(0.90f, 0.35f, 0.35f);
+            if (unit.Row == "back") c *= 0.75f;
+            return c;
+        }
+
+        private void RefreshWorld()
+        {
+            if (_engine == null) return;
+            foreach (var u in _engine.Ctx.Units)
+            {
+                if (!_views.TryGetValue(u.Id, out var v)) continue;
+                string intent = u.Team == Team.Enemy ? IntentLabel(_engine.CurrentIntentOf(u.Id)) : "";
+                v.Refresh(u, intent);
+                v.SetColor(UnitColor(u, u.IsDead));
+            }
+        }
+
+        private static string IntentLabel(IntentConfig it)
+        {
+            if (it == null) return "";
+            switch (it.type)
+            {
+                case "attack": return it.target == "all" ? "全体" : "攻击";
+                case "multi": return "连击x" + it.hits;
+                case "charge": return "蓄力!";
+                case "attackUp": return "强化";
+                default: return it.type;
+            }
+        }
+
+        // ---------- 玩家指令 ----------
+
+        private void PlayCard(int handIndex)
+        {
+            if (_engine == null) return;
+            var id = handIndex >= 0 && handIndex < _engine.Hand.Count ? _engine.Hand[handIndex] : null;
+            string name = _engine.GetCard(id)?.name ?? id;
+            if (_engine.PlayCard(handIndex, _selectedTarget))
+            {
+                Log("打出 " + name + " → " + UnitName(_selectedTarget));
+                RefreshWorld();
+            }
+        }
+
+        private void ChooseSkill(string skillId)
+        {
+            if (_engine == null || string.IsNullOrEmpty(_selectedActor)) return;
+            if (_engine.ChooseSkill(_selectedActor, skillId, _selectedTarget))
+                Log(UnitName(_selectedActor) + " 选择 " + SkillName(_selectedActor, skillId));
+        }
+
+        private void EndRound()
+        {
+            if (_engine == null || _engine.IsFinished) return;
+            var order = _engine.EndRound();
+            Log("出手：" + string.Join(" → ", order.Select(u => u.Name + (u.IsDead ? "(亡)" : ""))));
+            RefreshWorld();
         }
 
         private void Log(string msg)
@@ -69,6 +174,27 @@ namespace CQ.Runtime
             _lastEvent = msg;
             Debug.Log("[CQ.Battle] " + msg);
         }
+
+        private void DumpErrors(string label, List<string> errors)
+        {
+            foreach (var e in errors) Debug.LogError("[" + label + "] " + e);
+        }
+
+        private string UnitName(string id)
+        {
+            var u = _engine != null ? _engine.Ctx.GetUnit(id) : null;
+            return u != null ? u.Name : (id ?? "无");
+        }
+
+        private string SkillName(string charId, string skillId)
+        {
+            var skills = _engine.SkillsOf(charId);
+            if (skills == null) return skillId;
+            foreach (var s in skills) if (s.id == skillId) return s.name;
+            return skillId;
+        }
+
+        // ---------- HUD ----------
 
         private void OnGUI()
         {
@@ -80,132 +206,123 @@ namespace CQ.Runtime
             }
             if (_engine == null) return;
 
+            GUILayout.BeginArea(new Rect(8f, 8f, 180f, Screen.height - 16f), GUI.skin.box);
+            DrawActionBar();
+            GUILayout.EndArea();
+
+            GUILayout.BeginArea(new Rect(200f, 8f, Screen.width - 210f, Screen.height - 16f));
+            DrawMain();
+            GUILayout.EndArea();
+        }
+
+        private void DrawActionBar()
+        {
+            GUILayout.Label("== 行动条 ==");
+            GUILayout.Label("第 " + _engine.Round + " 回合");
+            if (_engine.IsFinished)
+                GUILayout.Label(_engine.Winner == Team.Player ? "我方胜利" : "我方失败");
+
+            var order = _engine.TurnOrder;
+            if (order == null || order.Count == 0)
+            {
+                GUILayout.Label("(尚未出手)");
+            }
+            else
+            {
+                foreach (var u in order)
+                    GUILayout.Label((u.Team == Team.Player ? "我 " : "敌 ") + u.Name + (u.IsDead ? "(亡)" : ""));
+            }
+
+            GUILayout.Space(8);
+            GUILayout.Label("抽牌堆 " + _engine.Deck.DrawPileCount);
+            GUILayout.Label("弃牌堆 " + _engine.Deck.DiscardPileCount);
+        }
+
+        private void DrawMain()
+        {
+            if (_lastEvent.Length > 0) GUILayout.Label("最近：" + _lastEvent);
+            GUILayout.Space(8);
+
             GUILayout.BeginHorizontal();
-
-            GUILayout.BeginVertical(GUILayout.Width(320));
-            DrawTop();
             DrawEnemies();
-            GUILayout.EndVertical();
-
-            GUILayout.BeginVertical(GUILayout.Width(320));
             DrawPlayers();
             DrawSkills();
-            GUILayout.EndVertical();
-
             GUILayout.EndHorizontal();
 
             DrawHand();
             DrawControls();
         }
 
-        private void DrawTop()
-        {
-            GUILayout.Label($"第 {_engine.Round} 回合  |  抽牌堆 {_engine.Deck.DrawPileCount} / 弃牌堆 {_engine.Deck.DiscardPileCount}");
-            if (_engine.IsFinished)
-                GUILayout.Label("结果：" + (_engine.Winner == Team.Player ? "我方胜利" : "我方失败"));
-            if (_lastEvent.Length > 0) GUILayout.Label("最近：" + _lastEvent);
-            GUILayout.Space(8);
-        }
-
         private void DrawEnemies()
         {
-            GUILayout.Label("———— 敌方（点击设为目标）————");
+            GUILayout.BeginVertical(GUILayout.Width(220));
+            GUILayout.Label("— 敌方（点设为目标）—");
             foreach (var e in _engine.Enemies)
             {
                 bool sel = e.Id == _selectedTarget;
-                string intent = "";
-                var cfg = _engine.CurrentIntentOf(e.Id);
-                if (cfg != null) intent = " 意图:" + cfg.id + (cfg.type == "charge" ? "⚠蓄力" : "");
-                string line = (sel ? "▶ " : "") + e.Name + " " + e.Hp + "/" + e.MaxHp + intent;
+                string line = (sel ? "▶ " : "") + e.Name + " " + e.Hp + "/" + e.MaxHp + " | " + IntentLabel(_engine.CurrentIntentOf(e.Id));
                 if (GUILayout.Button(line)) _selectedTarget = e.Id;
             }
-            GUILayout.Space(8);
+            GUILayout.EndVertical();
         }
 
         private void DrawPlayers()
         {
-            GUILayout.Label("———— 我方（点击设为操作角色）————");
+            GUILayout.BeginVertical(GUILayout.Width(220));
+            GUILayout.Label("— 我方（点设操作角色）—");
             foreach (var p in _engine.Players)
             {
                 bool sel = p.Id == _selectedActor;
                 string line = (sel ? "▶ " : "") + p.Name + " " + p.Hp + "/" + p.MaxHp
-                    + " 能量" + p.Energy + "/" + p.MaxEnergy + " 大招" + p.Ult + "/" + p.MaxUlt
-                    + " " + p.Row;
+                    + " 能" + p.Energy + "/" + p.MaxEnergy + " 大" + p.Ult + "/" + p.MaxUlt + " " + p.Row;
                 if (GUILayout.Button(line))
                 {
                     _selectedActor = p.Id;
                     _selectedTarget = p.Id;
                 }
             }
-            GUILayout.Space(8);
+            GUILayout.EndVertical();
         }
 
         private void DrawSkills()
         {
-            if (string.IsNullOrEmpty(_selectedActor)) return;
-            GUILayout.Label("———— 技能（角色：" + UnitName(_selectedActor) + "，目标：" + UnitName(_selectedTarget) + "）————");
+            GUILayout.BeginVertical();
+            GUILayout.Label("— 技能（目标：" + UnitName(_selectedTarget) + "）—");
+            if (string.IsNullOrEmpty(_selectedActor)) { GUILayout.EndVertical(); return; }
             var skills = _engine.SkillsOf(_selectedActor);
-            if (skills == null) return;
-            GUILayout.BeginHorizontal();
-            foreach (var s in skills)
+            if (skills != null)
             {
-                bool ok = _engine.CanUseSkill(_selectedActor, s.id);
-                GUI.enabled = ok;
-                if (GUILayout.Button(s.name))
+                GUILayout.BeginHorizontal();
+                foreach (var s in skills)
                 {
-                    if (_engine.ChooseSkill(_selectedActor, s.id, _selectedTarget))
-                        Log(UnitName(_selectedActor) + " 选择 " + s.name);
+                    GUI.enabled = _engine.CanUseSkill(_selectedActor, s.id);
+                    if (GUILayout.Button(s.name)) ChooseSkill(s.id);
+                    GUI.enabled = true;
                 }
-                GUI.enabled = true;
+                GUILayout.EndHorizontal();
             }
-            GUILayout.EndHorizontal();
-            GUILayout.Space(8);
+            GUILayout.EndVertical();
         }
 
         private void DrawHand()
         {
-            GUILayout.Label("———— 手牌（点一张打出，作用于当前目标）————");
+            GUILayout.Label("— 手牌（点一张打出，作用于当前目标）—");
             GUILayout.BeginHorizontal();
             for (int i = 0; i < _engine.Hand.Count; i++)
             {
                 var c = _engine.GetCard(_engine.Hand[i]);
-                string label = c != null ? c.name : _engine.Hand[i];
-                if (GUILayout.Button(label))
-                {
-                    if (_engine.PlayCard(i, _selectedTarget))
-                        Log("打出 " + label + " → " + UnitName(_selectedTarget));
-                }
+                if (GUILayout.Button(c != null ? c.name : _engine.Hand[i])) PlayCard(i);
             }
             if (_engine.Hand.Count == 0) GUILayout.Label("(空)");
             GUILayout.EndHorizontal();
-            GUILayout.Space(8);
         }
 
         private void DrawControls()
         {
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("结束回合"))
-            {
-                if (!_engine.IsFinished)
-                {
-                    var order = _engine.EndRound();
-                    var names = order.Select(u => u.Name + (u.IsDead ? "(亡)" : "")).ToArray();
-                    Log("出手顺序：" + string.Join(" → ", names));
-                }
-            }
+            if (GUILayout.Button("结束回合")) EndRound();
             if (GUILayout.Button("重开")) NewBattle();
             GUILayout.EndHorizontal();
-
-            if (_engine.TurnOrder != null && _engine.TurnOrder.Count > 0)
-            {
-                GUILayout.Label("上回合顺序：" + string.Join(" → ", _engine.TurnOrder.Select(u => u.Name)));
-            }
-        }
-
-        private string UnitName(string id)
-        {
-            var u = _engine.Ctx.GetUnit(id);
-            return u != null ? u.Name : (id ?? "无");
         }
     }
 }
