@@ -15,7 +15,9 @@ namespace CQ.Runtime
     public class BattleController : MonoBehaviour
     {
         [SerializeField] private long seed = 12345;
-        [SerializeField] private int levelId = 1;
+
+        private readonly List<LevelConfig> _levels = new List<LevelConfig>();
+        private int _levelIndex = 0;
 
         private BattleEngine _engine;
         private readonly Dictionary<string, UnitView> _views = new Dictionary<string, UnitView>();
@@ -63,15 +65,19 @@ namespace CQ.Runtime
                 return;
             }
 
-            var level = levels.items.FirstOrDefault(l => l.id == levelId) ?? levels.items.FirstOrDefault();
-            if (level == null || level.waves == null || level.waves.Count == 0)
+            _levels.Clear();
+            _levels.AddRange(levels.items.OrderBy(l => l.id));
+            if (_levels.Count == 0)
             {
                 _configError = "无可用关卡";
                 return;
             }
+            if (_levelIndex < 0) _levelIndex = 0;
+            if (_levelIndex >= _levels.Count) _levelIndex = _levels.Count - 1;
+            var level = _levels[_levelIndex];
 
             var catalog = enemies.items.ToDictionary(e => e.id);
-            _engine = BattleEngine.Create(seed, chars.items, level.waves[0].enemies, catalog, cards.items);
+            _engine = BattleEngine.Create(seed + _levelIndex, chars.items, level.waves[0].enemies, catalog, cards.items);
             _engine.StartBattle();
 
             _selectedActor = _engine.Players.FirstOrDefault(p => !p.IsDead)?.Id;
@@ -79,7 +85,7 @@ namespace CQ.Runtime
 
             SpawnWorld();
             RefreshWorld();
-            Log("开战：" + level.name);
+            Log("开战 " + (_levelIndex + 1) + "/" + _levels.Count + "：" + level.name);
         }
 
         private void SpawnWorld()
@@ -167,6 +173,13 @@ namespace CQ.Runtime
             var order = _engine.EndRound();
             Log("出手：" + string.Join(" → ", order.Select(u => u.Name + (u.IsDead ? "(亡)" : ""))));
             RefreshWorld();
+        }
+
+        private void NextLevel()
+        {
+            if (_levelIndex + 1 >= _levels.Count) return;
+            _levelIndex++;
+            NewBattle();
         }
 
         private void Log(string msg)
@@ -323,6 +336,18 @@ namespace CQ.Runtime
             if (GUILayout.Button("结束回合")) EndRound();
             if (GUILayout.Button("重开")) NewBattle();
             GUILayout.EndHorizontal();
+
+            if (_engine.IsFinished && _engine.Winner == Team.Player)
+            {
+                if (_levelIndex + 1 < _levels.Count)
+                {
+                    if (GUILayout.Button("下一关 → " + _levels[_levelIndex + 1].name)) NextLevel();
+                }
+                else
+                {
+                    GUILayout.Label("★ 已打穿全部关卡 ★");
+                }
+            }
         }
     }
 }
