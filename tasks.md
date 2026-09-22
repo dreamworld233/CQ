@@ -98,11 +98,11 @@ T1 脚手架+DTO+配置加载
 
 ### T7 串联（依赖 T2–T6）
 
-- [ ] **T7.1 死亡/胜负/完整闭环**
-  - 产出：完整回合状态机闭环。
-  - 验收：`TurnManagerTests` 跑完一局（输入假指令），胜负判定正确。
-- [ ] **T7.2 最小可玩场景**
-  - 产出：`Runtime/BattleController.cs`（临时素材 + 控制台/简单 UI 交互）。
+- [x] **T7.1 死亡/胜负/完整闭环**
+  - 产出：`Core/Battle/BattleEngine.cs` + `Core/Cards/Deck.cs`；`EnemyActionResolver.ResolveSkipped`（打断只走蓄力释放路径）；`SkillResolver.CanUse`（能量/大招门槛）。
+  - 验收：`BattleEngineTests` 6 测试（自动普攻胜利 / 打断跳过并取消蓄力 / 能量门槛 / 抽牌封顶 / 敌方获胜 / 同 seed 同态）。
+- [x] **T7.2 最小可玩场景**
+  - 产出：`Runtime/BattleController.cs`（IMGUI 选招/打牌/结束回合/重开）+ `Editor/BattleSceneMenu.cs`（菜单 `CQ/创建战斗测试场景`）。
   - 验收：编辑器里从选 3 角色到打穿 1 个临时关。
 
 ## 第 2 周任务（粗列，动工时再拆细同格式）

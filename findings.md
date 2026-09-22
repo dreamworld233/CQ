@@ -48,6 +48,11 @@
 | `战斗设计.md` 曾缺失 | 用户补录，现为规则源头 |
 | 计划把 `ConfigLoader.cs` 放 Core，但 JsonUtility 需 UnityEngine | 加载器移到 Runtime，Core 只保留纯 DTO + 校验（见技术决策） |
 
+## T7 集成积累
+- 敌人实例 id = `配置id_序号`（如 `grunt_0`），`Unit.Id` 全局唯一；意图模型每实例一份。关卡 `enemies` 可重复。
+- 打断跳回合用 `EnemyActionResolver.ResolveSkipped`：只走蓄力释放路径，`interruptible` 蓄力被取消（拆大招已成立）。
+- 待 T8/T9 平衡隐患：杂兵 `attackUp` 意图 `Duration=1 round` 于其行动当回合生效、回合末即失效，当前实战无可受益伤害。T8 数值/意图节奏一并修正。
+
 ## 资源
 - `demo任务清单.md`（需求源头）
 - `战斗设计.md`（战斗规则源头）

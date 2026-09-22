@@ -74,6 +74,25 @@
 - 裁决：T4 的 `interruptible` 绑定「蓄力时心态」，打断仅当 interruptible 且 HasStatus(Interrupt)；接受。T5 `SourceUnitId` 赋值保留。
 - 遗留：T5.1 抽牌/手牌管理移入 T7；interrupt 跳过回合时 `_pending` 蓄力是否取消，留 T7 集成定。
 
+### 阶段 7：实现（T7 串联）
+- **状态：** complete（文件层；待 Unity 编译 + 跑 NUnit 验证）
+- 执行的操作：
+  - `Core/Cards/Deck.cs`：抽牌/存牌/打出 + 弃牌回洗，全走 Rng。
+  - `Core/Battle/BattleEngine.cs`：确定性编排器（StartBattle → 输入 Phase 打牌/选招 → EndRound 速度混排+逐个结算+死亡+胜负+回合末衰减）。
+  - `EnemyActionResolver.ResolveSkipped`（打断只走蓄力释放路径，`interruptible` 蓄力取消）；`SkillResolver.CanUse`（能量/大招门槛）。
+  - `Runtime/BattleController.cs`（IMGUI 最小可玩：选招/打牌/结束回合/重开）+ `Editor/BattleSceneMenu.cs`。
+  - `BattleEngineTests.cs` 6 测试（自动普攻胜 / 打断跳过并取消蓄力 / 能量门槛 / 抽牌封顶 / 敌方胜 / 同 seed 同态）。
+- 创建/修改的文件：
+  - `Assets/Scripts/Core/Cards/Deck.cs`
+  - `Assets/Scripts/Core/Battle/BattleEngine.cs`
+  - `Assets/Scripts/Core/Combat/EnemyActionResolver.cs`（+ResolveSkipped）
+  - `Assets/Scripts/Core/Combat/SkillResolver.cs`（+CanUse）
+  - `Assets/Scripts/Runtime/BattleController.cs`
+  - `Assets/Scripts/Editor/BattleSceneMenu.cs`
+  - `Assets/Tests/EditMode/BattleEngineTests.cs`
+  - `tasks.md`、`progress.md`、`findings.md`
+- 待办：Unity 编译 + 跑全量 EditMode；菜单 `CQ/创建战斗测试场景` 进最小可玩关。
+
 ## 测试结果
 | 测试 | 输入 | 预期结果 | 实际结果 | 状态 |
 |------|------|---------|---------|------|

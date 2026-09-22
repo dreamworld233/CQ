@@ -9,6 +9,19 @@ namespace CQ.Core.Combat
     /// </summary>
     public static class SkillResolver
     {
+        /// <summary>本技能当前是否可释放（能量/大招条门槛，数值全来自配置与 Unit.Max*）。</summary>
+        public static bool CanUse(SkillSpec skill, Unit caster)
+        {
+            if (skill == null || caster == null || caster.IsDead) return false;
+            switch (skill.type)
+            {
+                case "basic": return true;
+                case "skill": return caster.Energy >= skill.energyCost;
+                case "ult": return caster.Ult >= caster.MaxUlt;
+                default: return false;
+            }
+        }
+
         public static void Resolve(
             SkillSpec skill,
             CombatContext ctx,

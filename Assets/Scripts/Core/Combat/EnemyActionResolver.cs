@@ -44,6 +44,16 @@ namespace CQ.Core.Combat
             model.Advance();
         }
 
+        /// <summary>
+        /// 被打断跳过本回合时调用：只走蓄力释放路径，不执行本回合意图。
+        /// interruptible 蓄力被 interrupt 取消；非 interruptible 蓄力仍照常释放。
+        /// </summary>
+        public void ResolveSkipped(CombatContext ctx, string enemyId)
+        {
+            if (ctx == null || string.IsNullOrEmpty(enemyId)) return;
+            ReleasePending(ctx, enemyId);
+        }
+
         private void ReleasePending(CombatContext ctx, string enemyId)
         {
             if (!_pending.TryGetValue(enemyId, out var p)) return;
