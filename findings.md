@@ -65,6 +65,19 @@
   - `Rng` xorshift 常数、`Team` 枚举 0/1——算法/顺序，非游戏数值。
 - 已知非理想项：`Statuses/*.json` 的 `duration/turn` 目前仅作文档与校验，卡牌/敌人施加状态时未回读该值（因所有状态本设计就是持续 1 回合）。留待后续若加「持续 N 回合」状态再接线。
 
+## 待修 bug（用户实测，T11 修）
+
+### BUG-A 行动条不显示「本回合当前顺序」
+- 现象：行动条只在 `结束回合` 后显示上一回合已结算顺序；新回合开始（抽卡/亮意图后）不显示本回合出手顺序。
+- 根因：`BattleEngine.TurnOrder`（`_lastOrder`）只在 `EndRound` 内由 `TurnManager.RunRound` 得到；输入阶段无「当前顺序」数据。
+- 修法：`BattleEngine` 加按需计算的 `CurrentOrder` = `SpeedSorter.Sort(存活单位, u => StatusResolver.EffectiveSpeedOfUnit(u, Ctx))`，在 `BeginRound` 后与 `PlayCard`（速度卡改变排序）后即最新；`BattleController.DrawActionBar` 改读 `CurrentOrder`。UI 实时刷新即可。
+
+### BUG-B 多角色同回合选招 → 敌人伤害丢失
+- 现象：一回合只手动选 1 个角色普攻（其余默认普攻）敌人正常掉血；一回合手动给多个角色选普攻，敌人几乎不掉血，像「只记录最后一次操作」，有时最后一次也丢。
+- 根因：纯 UI bug，引擎没错。`BattleController.DrawPlayers` 点我方角色时 `_selectedTarget = p.Id`（设成自己）。随后 `ChooseSkill(_selectedActor, skillId, _selectedTarget)` 的单体伤害命中目标=自己，敌人不掉血；默认普攻 `DefaultBasicPlan` 目标=首个存活敌人，掩盖了单角色场景。
+- 修法：点我方角色只设 `_selectedActor`，不清/不改 `_selectedTarget`（或重置为首个存活敌人，绝不设成自己）；治疗/护盾「指向我方」单独做目标选择。
+- 文件：`Assets/Scripts/Runtime/BattleController.cs` `DrawPlayers`（`_selectedTarget = p.Id;` 处）与 `ChooseSkill`。
+
 ## 资源
 - `demo任务清单.md`（需求源头）
 - `战斗设计.md`（战斗规则源头）
