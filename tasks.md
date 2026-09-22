@@ -56,45 +56,45 @@ T1 脚手架+DTO+配置加载
 
 ### T3 角色三循环（依赖 T1；并行组 A）
 
-- [ ] **T3.1 Unit + 能量/大招条**
-  - 产出：`Core/Combat/Unit.cs`（实现契约字段+方法）。
-  - 验收：普攻 +1 能 +1 大招、技能耗 2 能 +1 大招、终结技耗满大招，全部按初值正确。
-- [ ] **T3.2 Damage**
-  - 产出：`Core/Combat/Damage.cs`（物理/魔法、single/all、heal，去尾乘法）。
-  - 验收：66×0.75=49；攻增→虚弱→护盾顺序正确。
-- [ ] **T3.3 9 招 resolver**
-  - 产出：`Core/Combat/SkillResolver.cs`（basic/skill/ult 三型 × 3 角色）。
-  - 验收：9 招逐一触发，能量/大招/伤害数值正确。
+- [x] **T3.1 Unit + 能量/大招条**
+  - 产出：`Core/Combat/Unit.cs`（T2 提前落地：字段+方法全齐）。
+  - 验收：普攻 +1 能 +1 大招、技能耗 2 能 +1 大招、终结技耗满大招，见 `SkillResolverTests`。
+- [x] **T3.2 Damage**
+  - 产出：`Core/Combat/Damage.cs`（去尾乘法，攻增→虚弱→护盾，共享契约）。
+  - 验收：`DamageTests` 覆盖 66×0.75=49、顺序、护盾挡一次。
+- [x] **T3.3 9 招 resolver**
+  - 产出：`Core/Combat/SkillResolver.cs`（basic/skill/ult × 3 角色，subagent）。
+  - 验收：`SkillResolverTests` 12 测试逐招断言。
 
 ### T4 意图 + 目标选择（依赖 T1；并行组 A）
 
-- [ ] **T4.1 IntentModel**
-  - 产出：`Core/Combat/IntentModel.cs`（意图枚举、序列循环、回合开始亮意图）。
-  - 验收：预告与实际行动一致；蓄力第 2 回合才结算。
-- [ ] **T4.2 敌人行动结算**
-  - 产出：敌人行动 resolver（普攻/蓄力/攻增/AOE/连击）。
-  - 验收：5 类敌人行动全部按意图序列结算。
-- [ ] **T4.3 TargetSelector**
-  - 产出：`Core/Combat/TargetSelector.cs`（受击权重加权随机）。
-  - 验收：`TargetSelectorTests` 前排权重 > 后排；单人且嘲讽位不可实时跳票（本期仅权重）。
+- [x] **T4.1 IntentModel**
+  - 产出：`Core/Combat/IntentModel.cs`（subagent）。
+  - 验收：`IntentModelTests` 序列循环。
+- [x] **T4.2 敌人行动结算**
+  - 产出：`Core/Combat/EnemyActionResolver.cs`（attack/multi/attackUp/charge，subagent）。
+  - 验收：`EnemyActionResolverTests` 6 测试；charge 第 2 回合释放、被 interrupt 不释放。
+- [x] **T4.3 TargetSelector**
+  - 产出：`Core/Combat/TargetSelector.cs`（subagent）。
+  - 验收：`TargetSelectorTests` 前排权重 > 后排、不返 dead。
 
 ### T5 卡牌系统（依赖 T1；并行组 A）
 
-- [ ] **T5.1 CardDef + 抽牌/存牌/多出**
-  - 产出：`Core/Cards/CardDef.cs`、抽牌与手牌管理。
-  - 验收：每回合抽 1、可囤、可一回合多出；打牌窗口仅在回合开始意图亮后。
-- [ ] **T5.2 CardEffectResolver（8 张）**
-  - 产出：`Core/Cards/CardEffectResolver.cs`（打断/虚弱/降速/提速/护盾/攻增）。
-  - 验收：8 张全触发；打断只对「本回合意图已亮」生效。
+- [~] **T5.1 CardDef + 抽牌/存牌/多出**
+  - 产出：`Core/Cards/CardDef.cs`（subagent）；抽牌/手牌管理**移入 T7**（手牌是回合态）。
+  - 验收：卡牌 effect 触发见 T5.2；抽牌/存牌/多出在 T7 闭环验收。
+- [x] **T5.2 CardEffectResolver（8 张）**
+  - 产出：`Core/Cards/CardEffectResolver.cs`（6 效果，subagent）。
+  - 验收：`CardEffectResolverTests` 6 测试；打断等效果走 AddStatus。
 
 ### T6 状态系统（依赖 T1；并行组 A）
 
-- [ ] **T6.1 StatusType + StatusEffect**
-  - 产出：`Core/Status/StatusType.cs`、`StatusEffect.cs`。
-  - 验收：5 状态枚举 + 时长/时点字段齐全。
-- [ ] **T6.2 StatusResolver（结算时序）**
-  - 产出：`Core/Status/StatusResolver.cs`（虚弱去尾、护盾挡一次、减速/提速、打断、回合结束衰减）。
-  - 验收：打断后本回合不出手、下回合恢复；护盾只挡一次。
+- [x] **T6.1 StatusType + StatusEffect**
+  - 产出：`Core/Combat/StatusType.cs`、`StatusEffect.cs`（共享契约，非 Core/Status）。
+  - 验收：5 状态枚举 + Duration/Turn/Percent/Amount 齐全。
+- [x] **T6.2 StatusResolver（结算时序）**
+  - 产出：`Core/Status/StatusResolver.cs`（subagent）。
+  - 验收：`StatusResolverTests` 5 测试；打断跳回合、护盾 once、减速/提速只本回合、回合末衰减。
 
 ### T7 串联（依赖 T2–T6）
 

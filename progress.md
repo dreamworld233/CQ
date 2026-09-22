@@ -59,6 +59,21 @@
   - `Assets/Scripts/Core/Battle/{Rng,SpeedSorter,ActionQueue,TurnManager}.cs`
   - `Assets/Tests/EditMode/{SpeedSorterTests,TurnManagerTests}.cs`
 
+### 阶段 6：实现（T3–T6，4 subagent 并行）
+- **状态：** complete（文件层；待 Unity 编译 + 跑 NUnit 验证）
+- 执行的操作：
+  - 冻结共享契约 spine：`StatusType/StatusEffect/CombatContext/CombatContracts/Damage`（string id、Haste 瞬态）；契约 int→string 修正。
+  - T3 `SkillResolver`（9 招+能量/大招）；T4 `IntentModel/TargetSelector/EnemyActionResolver`；T5 `CardDef/CardEffectResolver`；T6 `StatusResolver`。
+  - 各附 EditMode 测试（SkillResolverTests 12、EnemyActionResolverTests 6、TargetSelectorTests 3、IntentModelTests 1、CardEffectResolverTests 6、StatusResolverTests 5）。
+- 创建/修改的文件：
+  - `Assets/Scripts/Core/Combat/{StatusType,StatusEffect,CombatContext,CombatContracts,Damage}.cs`
+  - `Assets/Scripts/Core/Combat/{SkillResolver,IntentModel,TargetSelector,EnemyActionResolver}.cs`
+  - `Assets/Scripts/Core/Cards/{CardDef,CardEffectResolver}.cs`
+  - `Assets/Scripts/Core/Status/StatusResolver.cs`
+  - `Assets/Tests/EditMode/*Tests.cs`（6 个新测试文件）
+- 裁决：T4 的 `interruptible` 绑定「蓄力时心态」，打断仅当 interruptible 且 HasStatus(Interrupt)；接受。T5 `SourceUnitId` 赋值保留。
+- 遗留：T5.1 抽牌/手牌管理移入 T7；interrupt 跳过回合时 `_pending` 蓄力是否取消，留 T7 集成定。
+
 ## 测试结果
 | 测试 | 输入 | 预期结果 | 实际结果 | 状态 |
 |------|------|---------|---------|------|
@@ -72,7 +87,7 @@
 ## 五问重启检查
 | 问题 | 答案 |
 |------|------|
-| 我在哪里？ | T2 文件完成，待 Unity 编译 + NUnit，然后进 T3–T6 并行 |
+| 我在哪里？ | T3–T6 文件完成（4 subagent），待 Unity 编译 + NUnit，然后进 T7 集成 |
 | 我要去哪里？ | 剩余实现阶段 |
 | 目标是什么？ | 2 周可玩可讲的 2.5D 回合制垂直切片 |
 | 我学到了什么？ | 见 findings.md |
