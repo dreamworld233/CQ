@@ -60,10 +60,9 @@
 Assets/
   Scripts/
     Core/                       # 纯 C#，零 UnityEngine 依赖
-      Config/                   # 只读 DTO + ConfigLoader
+      Config/                   # 只读 DTO + 校验
         CharacterConfig.cs  EnemyConfig.cs  CardConfig.cs
-        StatusConfig.cs     LevelConfig.cs  IntentConfig.cs
-        ConfigLoader.cs
+        StatusConfig.cs     LevelConfig.cs  LoadResult.cs  ConfigValidator.cs
       Battle/
         TurnManager.cs          # 回合状态机
         ActionQueue.cs          # 排序后的行动队列
@@ -75,7 +74,8 @@ Assets/
         CardDef.cs  CardEffectResolver.cs
       Status/
         StatusType.cs  StatusEffect.cs  StatusResolver.cs
-    Runtime/                    # MonoBehaviour 桥接 + 表现层
+    Runtime/                    # MonoBehaviour 桥接 + 表现层 + JSON 反序列化
+      ConfigJson.cs  ConfigLoader.cs
       BattleController.cs  UnitView.cs
       ActionBarUI.cs  IntentIconUI.cs  HandUI.cs  CameraController.cs
       PositioningView.cs        # 前后排站位表现
@@ -290,6 +290,9 @@ RoundEnd（状态衰减） → 胜负判定 → 下一回合 或 结束
 | AI 管线降为可选提效 | 用户定调：主目标是游戏完整逻辑 |
 | 本期本地异步单机 | 任务清单冻结规模 + 用户确认 |
 | 前后排只做框架（row + 受击权重） | 用户定调：先框架，差异玩法后续扩展 |
+| JSON 反序列化放 Runtime，Core 只留纯 DTO + 校验 | JsonUtility 属 UnityEngine 模块，保 Core 零引擎引用 |
+| `intents` 数组带 id、每实体一 JSON 文件 | JsonUtility 不支持 Dictionary/顶层数组 |
+| 卡池 8 张 = 6 独特定义，`count` 合计 8 | 任务清单 8 卡与 schema 6 效果一致 |
 
 ## 遇到的错误
 

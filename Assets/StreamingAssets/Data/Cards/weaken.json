@@ -1,0 +1,1 @@
+{ "id": "weaken", "name": "虚弱", "effect": { "type": "weaken", "percent": 25 }, "count": 2 }

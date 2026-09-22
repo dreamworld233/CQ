@@ -11,7 +11,7 @@
 ## 研究发现
 - 引擎：Unity 2022.3.62f2；渲染：URP 14.0.12 + 2D Renderer。
 - 测试框架 `com.unity.test-framework` 1.1.33 已装。
-- JSON 库：内置 `JsonUtility`。
+- JSON 库：内置 `JsonUtility`（不能反序列化顶层数组 / Dictionary，字段需 public + `[Serializable]`）。
 - git 2.52.0，全局 user `dreamworld233`（已配）；`gh` CLI 未装；本地非 git 仓库。
 - 远程 `https://github.com/dreamworld233/CQ.git` 为废弃版本，待重置。
 
@@ -36,12 +36,16 @@
 | 前后排用 row + 受击权重表达 | 通用规则，预留嘲讽/潜行扩展 |
 | AI 管线降为可选待办 | 用户定调：先实现游戏逻辑 |
 | 无第三方 JSON/网络库 | 本期无网络、无在线 LLM |
+| JSON 反序列化放 Runtime（`ConfigJson`/`ConfigLoader`），Core 只留纯 DTO + `ConfigValidator` | JsonUtility 属 `UnityEngine.JSONSerializeModule`，与 Core「零引擎引用」冲突；纯 DTO 仍可被外部 headless 解析器复用 |
+| `intents` 用数组带 `id`（非 map）、每实体一 JSON 文件（非顶层数组） | JsonUtility 无 Dictionary/顶层数组支持 |
+| 卡池 8 张 = 6 个独特卡定义，`count` 合计 8 | 任务清单 8 卡与 schema 6 种效果一致 |
 
 ## 遇到的问题
 | 问题 | 解决方案 |
 |------|---------|
 | 初版把 AI 闭环当验收核心 | 降为可选提效，D9/D10 换成游戏逻辑任务 |
 | `战斗设计.md` 曾缺失 | 用户补录，现为规则源头 |
+| 计划把 `ConfigLoader.cs` 放 Core，但 JsonUtility 需 UnityEngine | 加载器移到 Runtime，Core 只保留纯 DTO + 校验（见技术决策） |
 
 ## 资源
 - `demo任务清单.md`（需求源头）

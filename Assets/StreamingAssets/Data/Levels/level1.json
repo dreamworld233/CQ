@@ -1,0 +1,1 @@
+{ "id": 1, "name": "群怪来袭", "waves": [ { "enemies": ["grunt", "grunt", "grunt"] } ] }

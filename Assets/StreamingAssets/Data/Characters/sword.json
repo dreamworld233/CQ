@@ -1,0 +1,16 @@
+{
+  "id": "sword",
+  "name": "剑士",
+  "role": "dps",
+  "maxHp": 100,
+  "baseSpeed": 10,
+  "maxEnergy": 3,
+  "maxUlt": 3,
+  "row": "front",
+  "aggroWeight": 2,
+  "skills": [
+    { "id": "sword_basic", "name": "普攻", "type": "basic", "energyDelta": 1, "ultDelta": 1, "damage": { "kind": "physical", "target": "single", "amount": 12 } },
+    { "id": "sword_skill", "name": "重斩", "type": "skill", "energyCost": 2, "ultDelta": 1, "damage": { "kind": "physical", "target": "single", "amount": 30 } },
+    { "id": "sword_ult", "name": "疾风斩", "type": "ult", "damage": { "kind": "physical", "target": "all", "amount": 45 } }
+  ]
+}

@@ -1,0 +1,1 @@
+{ "id": "haste", "name": "提速", "effect": { "type": "haste", "percent": 50 }, "count": 1 }

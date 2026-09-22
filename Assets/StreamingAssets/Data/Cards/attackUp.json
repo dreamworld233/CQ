@@ -1,0 +1,1 @@
+{ "id": "attackUp", "name": "攻增", "effect": { "type": "attackUp", "percent": 30 }, "count": 1 }

@@ -1,0 +1,1 @@
+{ "id": 3, "name": "领主与爪牙", "waves": [ { "enemies": ["lord", "claw", "claw"] } ] }

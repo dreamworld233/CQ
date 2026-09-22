@@ -1,0 +1,1 @@
+{ "id": "slow", "name": "降速", "effect": { "type": "slow", "percent": 50 }, "count": 1 }

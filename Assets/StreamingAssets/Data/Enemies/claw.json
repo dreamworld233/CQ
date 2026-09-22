@@ -1,0 +1,13 @@
+{
+  "id": "claw",
+  "name": "爪牙",
+  "maxHp": 90,
+  "baseSpeed": 7,
+  "row": "front",
+  "aggroWeight": 2,
+  "intentSequence": ["slash", "multi"],
+  "intents": [
+    { "id": "slash", "type": "attack", "target": "single", "damage": 14 },
+    { "id": "multi", "type": "multi", "target": "single", "damage": 6, "hits": 3 }
+  ]
+}

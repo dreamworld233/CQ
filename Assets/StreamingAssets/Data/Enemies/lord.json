@@ -1,0 +1,14 @@
+{
+  "id": "lord",
+  "name": "领主",
+  "maxHp": 300,
+  "baseSpeed": 5,
+  "row": "front",
+  "aggroWeight": 2,
+  "intentSequence": ["basic", "aoe", "charge"],
+  "intents": [
+    { "id": "basic", "type": "attack", "target": "single", "damage": 40 },
+    { "id": "aoe", "type": "attack", "target": "all", "damage": 25 },
+    { "id": "charge", "type": "charge", "nextDamage": 120, "interruptible": true }
+  ]
+}

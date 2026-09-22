@@ -1,0 +1,19 @@
+{
+    "name": "CQ.Editor",
+    "rootNamespace": "CQ.Editor",
+    "references": [
+        "CQ.Core",
+        "CQ.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
