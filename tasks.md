@@ -107,7 +107,9 @@ T1 脚手架+DTO+配置加载
 
 ## 第 2 周任务（粗列，动工时再拆细同格式）
 
-- [ ] T8 数值配平 + 3 敌模板 + 3 关编排
+- [x] T8 数值配平 + 3 敌模板 + 3 关编排
+  - 产出：杂兵 `baseSpeed 4→7`（教敌我混排）；`IntentConfig.buffDuration`（攻增跨回合，修「attackUp 当回合即失效」平衡坑）；3 敌模板/3 关编排落表现状；`BalanceTests` 4 测试。
+  - 验收：`Level1_AutoBasic_IsWinnable`（纯普攻可过）、`Level1_TurnOrder_IsMixed`（混排）、`Lord_Has_Interruptible_Charge`（第 2 关教学）、`All_Wave_Enemy_Ids_Resolve`（引用无缺失）。
 - [ ] T9 意图完整结算 + 存牌爆发点验证
 - [ ] T10 2.5D 表现（左侧行动条 / 前后排站位 / 意图图标 / 手牌）
 - [ ] T11 打磨 + 数值微调

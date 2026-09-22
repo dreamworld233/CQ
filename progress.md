@@ -92,6 +92,22 @@
   - `Assets/Tests/EditMode/BattleEngineTests.cs`
   - `tasks.md`、`progress.md`、`findings.md`
 - 待办：Unity 编译 + 跑全量 EditMode；菜单 `CQ/创建战斗测试场景` 进最小可玩关。
+- 验证结果：编译 + 全量 EditMode 全绿；level1 可过（用户确认）。
+
+### 阶段 8：实现（T8 数值配平 + 3 敌模板 + 3 关编排）
+- **状态：** complete（文件层；待 Unity 编译 + 跑 NUnit 验证）
+- 执行的操作：
+  - 杂兵 `baseSpeed 4→7`：使 level1 出手顺序敌我混排，落实「速度排序」教学点。
+  - `IntentConfig.buffDuration` + `EnemyActionResolver` 攻增不再硬编码 `Duration=1`；`ConfigValidator` 补 attackUp 校验；杂兵 `attackUp` 设 `buffDuration:2`（跨到下一击）。
+  - `BalanceTests.cs` 4 测试（level1 纯普攻可过 / 混排 / 领主蓄力可打断 / 关卡引用无缺失）。
+- 创建/修改的文件：
+  - `Assets/Scripts/Core/Config/EnemyConfig.cs`（+buffDuration）
+  - `Assets/Scripts/Core/Config/ConfigValidator.cs`
+  - `Assets/Scripts/Core/Combat/EnemyActionResolver.cs`
+  - `Assets/StreamingAssets/Data/Enemies/grunt.json`
+  - `Assets/Tests/EditMode/BalanceTests.cs`
+  - `tasks.md`、`progress.md`、`findings.md`
+- 待办：Unity 编译 + 跑全量 EditMode（现 57 测试）。
 
 ## 测试结果
 | 测试 | 输入 | 预期结果 | 实际结果 | 状态 |

@@ -2,12 +2,12 @@
   "id": "grunt",
   "name": "杂兵",
   "maxHp": 60,
-  "baseSpeed": 4,
+  "baseSpeed": 7,
   "row": "front",
   "aggroWeight": 2,
   "intentSequence": ["basic", "attackUp"],
   "intents": [
     { "id": "basic", "type": "attack", "target": "single", "damage": 10 },
-    { "id": "attackUp", "type": "attackUp", "buffPercent": 25 }
+    { "id": "attackUp", "type": "attackUp", "buffPercent": 25, "buffDuration": 2 }
   ]
 }

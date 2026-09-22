@@ -56,6 +56,8 @@ namespace CQ.Core.Config
                 if (string.IsNullOrEmpty(it.id)) return "意图缺 id";
                 if (!In(IntentTypes, it.type)) return "意图 type 非法: " + it.type;
                 if (it.type == "charge" && !it.interruptible) return "charge 必须 interruptible=true";
+                if (it.type == "attackUp" && it.buffPercent <= 0) return "attackUp 需 buffPercent > 0";
+                if (it.type == "attackUp" && it.buffDuration <= 0) return "attackUp 需 buffDuration > 0";
             }
             return null;
         }

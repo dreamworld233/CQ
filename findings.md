@@ -51,7 +51,7 @@
 ## T7 集成积累
 - 敌人实例 id = `配置id_序号`（如 `grunt_0`），`Unit.Id` 全局唯一；意图模型每实例一份。关卡 `enemies` 可重复。
 - 打断跳回合用 `EnemyActionResolver.ResolveSkipped`：只走蓄力释放路径，`interruptible` 蓄力被取消（拆大招已成立）。
-- 待 T8/T9 平衡隐患：杂兵 `attackUp` 意图 `Duration=1 round` 于其行动当回合生效、回合末即失效，当前实战无可受益伤害。T8 数值/意图节奏一并修正。
+- T8 已修：`IntentConfig.buffDuration` 承接攻增跨回合（杂兵 `attackUp` 设 `buffDuration:2`），EnemyActionResolver 不再硬编码 `Duration=1`；`ConfigValidator` 补 attackUp 校验。
 
 ## 资源
 - `demo任务清单.md`（需求源头）

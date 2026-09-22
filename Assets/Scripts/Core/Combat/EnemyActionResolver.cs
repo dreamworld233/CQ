@@ -108,7 +108,7 @@ namespace CQ.Core.Combat
             {
                 Type = StatusType.AttackUp,
                 Percent = intent.buffPercent,
-                Duration = 1,
+                Duration = intent.buffDuration > 0 ? intent.buffDuration : 1,
                 Turn = "round",
                 SourceUnitId = enemyId
             });
