@@ -119,6 +119,28 @@
   - `tasks.md`、`progress.md`、`findings.md`
 - 待办：Unity 编译 + 跑全量 EditMode（现 60 测试）。
 
+### 阶段 10：实现（T10 2.5D 表现）
+- **状态：** complete（文件层；待用户 Unity 编译 + 目视验证）
+- 执行的操作：
+  - `Runtime/PositioningView.cs` 前后排站位（玩家右/敌左，前排低近/后排高远，同侧槽位横排）。
+  - `Runtime/UnitView.cs` 世界单位占位（SpriteRenderer 色块 + TextMesh 名字/血量/意图）。
+  - `BattleController.cs` 重写：世界单位生成 + 左侧常驻行动条 + 手牌/技能/意图 HUD + 自动建正交相机。
+- 创建/修改的文件：
+  - `Assets/Scripts/Runtime/PositioningView.cs`
+  - `Assets/Scripts/Runtime/UnitView.cs`
+  - `Assets/Scripts/Runtime/BattleController.cs`
+- 待办：`CQ/创建战斗测试场景` → Play 目视（站位/行动条/意图/手牌）。
+
+### 阶段 12（部分）：T12 确定性复验
+- **状态：** 部分完成（test 待 Unity 跑）
+- 执行的操作：`DeterminismTests.cs`（2 角色 + 领主 + 爪牙 + 打断/虚弱卡，逐回合同 seed 快照一致）。
+- 创建/修改的文件：`Assets/Tests/EditMode/DeterminismTests.cs`
+
+### 阶段 13（部分）：T13 面试讲稿 + 架构图
+- **状态：** 部分完成（doc 已写；录屏待用户）
+- 执行的操作：`交付/面试讲稿.md`（一句话可讲性 + 30s 口播 + 架构三件套 + mermaid + 2-3 分钟分镜 + 零硬编码抽查点）。
+- 创建/修改的文件：`交付/面试讲稿.md`
+
 ## 测试结果
 | 测试 | 输入 | 预期结果 | 实际结果 | 状态 |
 |------|------|---------|---------|------|
@@ -132,17 +154,16 @@
 ## 五问重启检查
 | 问题 | 答案 |
 |------|------|
-| 我在哪里？ | T1–T9 全完成；60 个 EditMode 测试全绿（用户确认）；本地已提交，远端用户自行 push |
-| 我要去哪里？ | T10 2.5D 表现（常驻左行动条 / 前后排站位 / 意图图标 / 手牌），替换现在 IMGUI 临时 UI |
+| 我在哪里？ | T1–T9 全绿完成；T10 表现层已写（待目视）、T12/T13 各推进一部（确定性测试 / 讲稿架构 docs）；本地提交到 dc17187/e9d9d50/28ed332 |
+| 我要去哪里？ | Unity 编译 + 跑全量（现 61 测试）+ 目视 T10 场景；再收口 T11 打磨、T12 回归、T13 录屏、T14 验收 |
 | 目标是什么？ | 2 周可玩可讲的 2.5D 回合制垂直切片 |
 | 我学到了什么？ | 见 findings.md |
-| 我做了什么？ | 战斗闭环跑通（BattleEngine 编 Book），level1/2 教学点成立 |
+| 我做了什么？ | 战斗闭环 + 2.5D 表现层 + 确定性测试 + 面试讲稿 |
 
 ## 下次继续（从这开始）
-- 命令行恢复：读 `progress.md` 本表 + `tasks.md` 勾选（`[x]`=done）确认进度，再读 `task_plan.md` 第 2 周 T10 细节。
-- 下一步 = **T10 2.5D 表现**：`Runtime/UnitView.cs`、`PositioningView.cs`（前后排站位）、`ActionBarUI.cs`（左侧常驻出手顺序条）、`IntentIconUI.cs`、`HandUI.cs`、`CameraController.cs`。当前 `BattleController` 是 IMGUI 临时桥，T10 换成 Scene/UGUI 或 2D Renderer 表现层，BattleEngine（Core）不动。
-- 已约：常驻行动条本次要补（用户明确提出）。
-- 剩余：T10–T14（表现/打磨/回归/录屏讲稿/缓冲）。
+- 命令行恢复：读 `progress.md` 本表 + `tasks.md` 勾选（`[x]`/`[~]`）确认进度。
+- 下一步 = **T10 目视验收**（用户）：`CQ/创建战斗测试场景` → Play，看站位/常驻左行动条/意图/手牌；确认后进 T11 打磨。
+- 剩余：T11（打磨微调）、T12 收口（全量 NUnit 全绿 + 现场改 JSON 抽查）、T13 收口（录屏）、T14 验收核对。
 - git 分工：本地 `git commit` 由我执行，远端 push 由用户本地完成。
 
 ## 提交记录（本次会话）
@@ -154,6 +175,10 @@
 | 97e1331 | T7 串联闭环 + 最小可玩场景 |
 | e7e925e | T8 数值配平 + 教学点测试 |
 | ab6db4a | T9 意图完整结算 + 存牌爆发点验证 |
+| 0cc23ad | 记录 T1-T9 全绿 + 下次继续指针 |
+| dc17187 | T10 2.5D 表现 |
+| e9d9d50 | T12 确定性复验测试 |
+| 28ed332 | T13 面试讲稿 + 架构图 |
 
 ---
 
