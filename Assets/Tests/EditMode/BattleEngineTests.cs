@@ -172,4 +172,53 @@ public class BattleEngineTests
         Assert.AreEqual(a.Winner, b.Winner);
         Assert.AreEqual(StateOf(a), StateOf(b));
     }
+
+    [Test]
+    public void IntentTarget_Locked_At_Reveal()
+    {
+        var eng = Make(1, new[] { C("sword", 100, 10, 12), C("c1", 160, 6, 8) }, new[] { E("grunt", 60, 4, 10) });
+        eng.StartBattle();
+
+        string gruntId = eng.Enemies[0].Id;
+        string target = eng.GetIntentTarget(gruntId);
+
+        Assert.IsNotNull(target, "亮意图即应有预锁目标");
+        Assert.IsTrue(eng.Players.Any(p => p.Id == target), "预锁目标应是玩家");
+    }
+
+    [Test]
+    public void HealSingle_Heals_Selected_Ally_Rejects_Enemy()
+    {
+        var healer = new CharacterConfig
+        {
+            id = "healer", name = "治疗", role = "support", maxHp = 100, baseSpeed = 10,
+            maxEnergy = 0, maxUlt = 0, row = "back", aggroWeight = 1,
+            skills = new List<SkillSpec>
+            {
+                new SkillSpec { id = "healer_ult", name = "治疗", type = "ult",
+                    heal = new HealSpec { target = "single", amount = 20 } }
+            }
+        };
+        var buddy = new CharacterConfig
+        {
+            id = "buddy", name = "伙伴", role = "dps", maxHp = 80, baseSpeed = 8,
+            maxEnergy = 0, maxUlt = 0, row = "front", aggroWeight = 1,
+            skills = new List<SkillSpec>
+            {
+                new SkillSpec { id = "buddy_basic", name = "普攻", type = "basic",
+                    damage = new DamageSpec { kind = "physical", target = "single", amount = 5 } }
+            }
+        };
+
+        var eng = Make(1, new[] { healer, buddy }, new[] { E("foe", 999, 0, 0) });
+        eng.StartBattle();
+        eng.Ctx.GetUnit("buddy").TakeDamage(50);
+
+        Assert.IsFalse(eng.ChooseSkill("healer", "healer_ult", "foe_0"), "治疗不可指向敌方");
+        Assert.IsTrue(eng.ChooseSkill("healer", "healer_ult", "buddy"), "治疗应能选友方");
+
+        eng.EndRound();
+
+        Assert.AreEqual(50, eng.Ctx.GetUnit("buddy").Hp, "治疗回 30→50");
+    }
 }

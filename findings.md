@@ -14,12 +14,25 @@
 - JSON 库：内置 `JsonUtility`（不能反序列化顶层数组 / Dictionary，字段需 public + `[Serializable]`）。
 - git 2.52.0，全局 user `dreamworld233`（已配）；`gh` CLI 未装；本地非 git 仓库。
 - 远程 `https://github.com/dreamworld233/CQ.git` 为废弃版本，待重置。
+- Android 环境（已查验）：编辑器 `G:\unity\Unity_2022.3.62f2` 的 AndroidPlayer 模块已装，内置 SDK `android-34/35/36` + build-tools `34.0.0` + NDK `23.1.7779620`(r23b) + OpenJDK `11.0.14.1` Temurin，全齐。外部 `G:\Android\AndroidSdk` 缺 ndk/cmdline-tools，不接 Unity。`JAVA_HOME=G:\jdk21`(JDK21)，构建须走内置 JDK11。Unity Build Settings 切 Android 无 `Unable to locate SDK` 报错（用户确认）。
 
 ## 已定微细节（用户确认）
 - 能量初值：`maxEnergy=3`、`maxUlt=3`；普攻 +1 能 +1 大招，技能耗 2 能 +1 大招，终结技耗满大招。后续可改。
 - 双人 LAN：本期不做，第二板块。
 - 行动条：显示出手顺序，放画面左侧。
 - 前后排：只做框架（row + 受击权重，前排更易受击），差异玩法后续扩展。
+
+## 平台决策（用户确认）
+- 平台以 **Android 横屏**为基准；PC 编辑器留作录屏 + 验收底盘，EditMode 测试仍在 PC 跑。
+- 理由：证明移动工程能力（构建链/触控/性能/真机调试），横屏复用现有左右战场布局改动最小。
+- 待办移动适配：方向锁定横屏、`CanvasScaler` Scale With Screen Size、触控热区、Android 返回键、`OnApplicationPause/Focus` 保战斗状态。
+
+## 战斗表现修订（用户确认）
+- 敌人意图三分类显示：攻击=(显示谁+伤害)、自增益=`↑`、给我方减益=`↓`。
+- 单体攻击/连击/蓄力/减益在亮意图时预锁目标（`BattleEngine.GetIntentTarget`），结算用锁定目标，已死回退 `TargetSelector`；同 seed 仍确定。
+- 新增敌方减益意图 `debuff`（对锁定玩家上 `weaken`）；`grunt` 序列 `[basic, attackUp, debuff]`。
+- 治愈可选友方：`guard`「守护」heal.target `self`→`single`；`BattleEngine.ChooseSkill` 加目标合法性（单治疗须友方、单伤害须敌方）。
+- `BattleController` 加「友方目标」按钮区；选治愈时目标非友方自动置回自己；意图文字报预锁目标名。
 
 ## 战斗规则要点（源：`战斗设计.md`）
 - 小回合 = 我方 3 + 敌方 ≤3 各行动一次。
@@ -67,16 +80,13 @@
 
 ## 待修 bug（用户实测，T11 修）
 
-### BUG-A 行动条不显示「本回合当前顺序」
-- 现象：行动条只在 `结束回合` 后显示上一回合已结算顺序；新回合开始（抽卡/亮意图后）不显示本回合出手顺序。
-- 根因：`BattleEngine.TurnOrder`（`_lastOrder`）只在 `EndRound` 内由 `TurnManager.RunRound` 得到；输入阶段无「当前顺序」数据。
-- 修法：`BattleEngine` 加按需计算的 `CurrentOrder` = `SpeedSorter.Sort(存活单位, u => StatusResolver.EffectiveSpeedOfUnit(u, Ctx))`，在 `BeginRound` 后与 `PlayCard`（速度卡改变排序）后即最新；`BattleController.DrawActionBar` 改读 `CurrentOrder`。UI 实时刷新即可。
+### BUG-A 行动条不显示「本回合当前顺序」——已修
+- 现象：行动条只在 `结束回合` 后显示上一回合已结算顺序；新回合开始不显示本回合出手顺序。
+- 修法：`BattleEngine` 加按需计算的 `CurrentOrder`（`SpeedSorter.Sort(Ctx.Units 存活, EffectiveSpeedOfUnit)`）；`BattleController.DrawActionBar` 改读 `CurrentOrder`。回归测试 `CurrentOrder_Available_DuringInput` 已加。
 
-### BUG-B 多角色同回合选招 → 敌人伤害丢失
-- 现象：一回合只手动选 1 个角色普攻（其余默认普攻）敌人正常掉血；一回合手动给多个角色选普攻，敌人几乎不掉血，像「只记录最后一次操作」，有时最后一次也丢。
-- 根因：纯 UI bug，引擎没错。`BattleController.DrawPlayers` 点我方角色时 `_selectedTarget = p.Id`（设成自己）。随后 `ChooseSkill(_selectedActor, skillId, _selectedTarget)` 的单体伤害命中目标=自己，敌人不掉血；默认普攻 `DefaultBasicPlan` 目标=首个存活敌人，掩盖了单角色场景。
-- 修法：点我方角色只设 `_selectedActor`，不清/不改 `_selectedTarget`（或重置为首个存活敌人，绝不设成自己）；治疗/护盾「指向我方」单独做目标选择。
-- 文件：`Assets/Scripts/Runtime/BattleController.cs` `DrawPlayers`（`_selectedTarget = p.Id;` 处）与 `ChooseSkill`。
+### BUG-B 多角色同回合选招 → 敌人伤害丢失——已修
+- 现象：手动给多个角色选普攻，敌人几乎不掉血（目标被设成自己）。
+- 修法：`DrawPlayers` 点我方只设 `_selectedActor`，删掉 `_selectedTarget = p.Id;`（目标独立保留上一个，不设自己）。
 
 ## 资源
 - `demo任务清单.md`（需求源头）

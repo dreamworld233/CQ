@@ -9,7 +9,7 @@ namespace CQ.Core.Config
     {
         private static readonly string[] Rows = { "front", "back" };
         private static readonly string[] SkillTypes = { "basic", "skill", "ult" };
-        private static readonly string[] IntentTypes = { "attack", "charge", "attackUp", "multi" };
+        private static readonly string[] IntentTypes = { "attack", "charge", "attackUp", "multi", "debuff" };
         private static readonly string[] CardTypes = { "interrupt", "weaken", "slow", "haste", "shield", "attackUp" };
         private static readonly string[] StatusIds = { "weaken", "shield", "attackUp", "slow", "interrupt" };
         private static readonly string[] Turns = { "round", "once" };
@@ -58,6 +58,8 @@ namespace CQ.Core.Config
                 if (it.type == "charge" && !it.interruptible) return "charge 必须 interruptible=true";
                 if (it.type == "attackUp" && it.buffPercent <= 0) return "attackUp 需 buffPercent > 0";
                 if (it.type == "attackUp" && it.buffDuration <= 0) return "attackUp 需 buffDuration > 0";
+                if (it.type == "debuff" && !In(StatusIds, it.debuffType)) return "debuff 的 debuffType 非法: " + it.debuffType;
+                if (it.type == "debuff" && it.debuffPercent <= 0) return "debuff 需 debuffPercent > 0";
             }
             return null;
         }

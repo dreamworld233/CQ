@@ -10,7 +10,7 @@
   "aggroWeight": 3,
   "skills": [
     { "id": "guard_basic", "name": "盾击", "type": "basic", "energyDelta": 1, "ultDelta": 1, "damage": { "kind": "physical", "target": "single", "amount": 8 } },
-    { "id": "guard_skill", "name": "守护", "type": "skill", "energyCost": 2, "ultDelta": 1, "heal": { "target": "self", "amount": 15 } },
+    { "id": "guard_skill", "name": "守护", "type": "skill", "energyCost": 2, "ultDelta": 1, "heal": { "target": "single", "amount": 15 } },
     { "id": "guard_ult", "name": "团体治疗", "type": "ult", "heal": { "target": "all", "amount": 20 } }
   ]
 }

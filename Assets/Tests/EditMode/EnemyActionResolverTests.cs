@@ -123,4 +123,24 @@ public class EnemyActionResolverTests
         resolver.Resolve(ctx, "e", Attack(10));
         Assert.AreEqual(65, p.Hp, "interruptible=false 不被 interrupt 取消，仍释放 25");
     }
+
+    [Test]
+    public void Debuff_Applies_Weaken_To_Locked_Player()
+    {
+        var e = E("e", 100);
+        var p = P("p", 100);
+        var ctx = Ctx(e, p);
+        var resolver = new EnemyActionResolver();
+
+        resolver.Resolve(ctx, "e", new IntentConfig
+        {
+            id = "d", type = "debuff", target = "single",
+            debuffType = "weaken", debuffPercent = 25, debuffDuration = 2
+        }, "p");
+
+        var fx = ctx.FindStatus("p", StatusType.Weaken);
+        Assert.IsNotNull(fx);
+        Assert.AreEqual(25, fx.Percent);
+        Assert.AreEqual(2, fx.Duration);
+    }
 }

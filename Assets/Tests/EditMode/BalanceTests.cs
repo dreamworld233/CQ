@@ -68,6 +68,17 @@ public class BalanceTests
     }
 
     [Test]
+    public void CurrentOrder_Available_DuringInput()
+    {
+        var eng = BuildLevel(1, 7);
+        eng.StartBattle();
+
+        Assert.AreEqual(BattleFlow.Input, eng.Flow, "开局应进入输入阶段");
+        Assert.AreEqual(0, eng.TurnOrder.Count, "结算前 TurnOrder 应空（BUG-A 旧读法）");
+        Assert.Greater(eng.CurrentOrder.Count, 0, "输入阶段行动条应读 CurrentOrder 得本回合顺序");
+    }
+
+    [Test]
     public void All_Wave_Enemy_Ids_Resolve()
     {
         var enemies = ConfigLoader.LoadEnemies();

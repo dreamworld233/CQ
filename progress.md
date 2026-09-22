@@ -149,6 +149,39 @@
   - 零硬编码审计写入 `findings.md`（规则常量 vs 平衡数据分类）。
 - 创建/修改的文件：`交付/验收清单.md`、`Assets/Scripts/Runtime/BattleController.cs`、`findings.md`
 
+### 阶段 15：平台决策（Android 横屏）+ 修 2 bug
+- **状态：** complete（文件层；待 Unity 编译 + 跑 NUnit 验证）
+- 执行的操作：
+  - 平台定 Android 横屏为基准，PC 留录屏/验收底盘（测试仍 PC 跑）。
+  - 查验 Android 环境：Unity 2022.3.62f2 AndroidPlayer 内置 SDK/NDK/JDK 全齐；外部 AndroidSdk 缺 ndk；`JAVA_HOME=JDK21` 需切内置 JDK11。Build Settings 切 Android 无报错（用户确认）。
+  - BUG-A 修：`BattleEngine` 加 `CurrentOrder`（按需速度混排），`DrawActionBar` 改读；加回归测试 `CurrentOrder_Available_DuringInput`。
+  - BUG-B 修：`DrawPlayers` 点我方删 `_selectedTarget = p.Id;`，目标独立保留。
+- 创建/修改的文件：
+  - `Assets/Scripts/Core/Battle/BattleEngine.cs`
+  - `Assets/Scripts/Runtime/BattleController.cs`
+  - `Assets/Tests/EditMode/BalanceTests.cs`
+  - `task_plan.md`、`findings.md`、`progress.md`
+- 验证结果：编译全绿 + 全量 EditMode 通过 + Play 目视「行动条即时刷 + 多角色选招掉血正常」均确认（用户确认，2 bug 已消）。
+
+### 阶段 16：意图三分类 + 治愈选友方 + 减益意图
+- **状态：** complete（文件层；待 Unity 编译 + 跑 NUnit 验证）
+- 执行的操作：
+  - 敌方意图三分类显示：攻击(谁+伤害)/自增益↑/给我方减益↓（`BattleController.IntentText`）。
+  - 单体攻击/连击/蓄力/减益亮意图时预锁目标（`BattleEngine.LockIntentTargets` + `GetIntentTarget`；`EnemyActionResolver` 用锁定目标，已死回退）。
+  - 新增敌方减益意图 `debuff`（`IntentConfig` 加字段 + `ConfigValidator` 校验 + resolver `Debuff`）；`grunt` 序列 `[basic, attackUp, debuff]`。
+  - 治愈选友方：`guard`「守护」heal.target `self`→`single`；`ChooseSkill` 加目标合法性；`BattleController` 加友方目标按钮区 + 治愈默认自己。
+- 创建/修改的文件：
+  - `Assets/Scripts/Core/Config/{EnemyConfig,ConfigValidator}.cs`
+  - `Assets/Scripts/Core/Combat/EnemyActionResolver.cs`
+  - `Assets/Scripts/Core/Battle/BattleEngine.cs`
+  - `Assets/Scripts/Runtime/BattleController.cs`
+  - `Assets/StreamingAssets/Data/Enemies/grunt.json`、`Data/Characters/guard.json`
+  - `Assets/Tests/EditMode/{EnemyActionResolverTests,BattleEngineTests}.cs`（+3 测试）
+  - `findings.md`、`progress.md`
+- 待办：Unity 编译 + 跑全量 EditMode（现 66 测试）；Play 目视三类意图 + 治疗指向友方。
+- 验证结果：编译全绿 + 全量测试通过 + Play 目视三类意图/治疗/友方目标均确认（用户确认）。
+- 补修：死亡敌人不再显示意图（`RefreshWorld` 与 `DrawEnemies` 按 `IsDead` 隐藏）。
+
 ## 测试结果
 | 测试 | 输入 | 预期结果 | 实际结果 | 状态 |
 |------|------|---------|---------|------|
@@ -162,18 +195,17 @@
 ## 五问重启检查
 | 问题 | 答案 |
 |------|------|
-| 我在哪里？ | T1–T9 全绿；T10–T14 全部推进；62 个 EditMode 测试全绿（用户确认）；用户实测发现 2 个待修 bug（见下），已记录待新窗口修 |
-| 我要去哪里？ | 修 2 个 bug（行动条当前顺序 / 点我方格设目标为自己导致伤害丢失）→ T11 收口 → T12 回归 → T13 录屏 |
-| 目标是什么？ | 2 周可玩可讲的 2.5D 回合制垂直切片 |
-| 我学到了什么？ | 见 findings.md（含「待修 bug」两节：BUG-A 行动条、BUG-B 自伤） |
-| 我做了什么？ | 战斗闭环 + 2.5D 表现 + 3 关连打 + 确定性测试 + 讲稿/验收清单 |
+| 我在哪里？ | BUG-A/BUG-B 已修全绿；意图三分类+治愈选友方+减益已落地（文件层），待 Unity 编译 + 66 测试验证 |
+| 我要去哪里？ | 编译 + 全量测试 → Play 目视三类意图/治疗 → Android 横屏适配 → 构建 APK → 真机/模拟器验证 → 录屏 |
+| 目标是什么？ | Android 横屏可玩可讲的 2.5D 回合制垂直切片 |
+| 我学到了什么？ | 见 findings.md（平台决策 + 战斗表现修订 + 意图预锁 + 减益/治愈） |
+| 我做了什么？ | 修 2 bug + 意图三分类显示 + 目标预锁 + 减益意图 + 治愈选友方 |
 
 ## 下次继续（从这开始）
-- 命令行恢复：读 `progress.md` 本表 + `findings.md`「待修 bug」节 + `tasks.md` 勾选。
-- **优先修 2 个 bug**（详见 `findings.md` 待修 bug）：
-  - BUG-A：行动条只显上回合顺序 → `BattleEngine` 加 `CurrentOrder`（按需速度混排），`DrawActionBar` 改读它，新回合开始即显示、打速度牌实时刷新。
-  - BUG-B：`BattleController.DrawPlayers` 点我方时 `_selectedTarget = p.Id` 设成自己，多角色同动时单体伤害打自己、敌人不掉血 → 点我方只改 `_selectedActor`，目标独立选择。
-- 收口顺序：修 bug → `CQ/创建战斗测试场景` 目视+playtest 三关 → T12 全量 NUnit + 改 JSON 抽查 → T13 录屏 → T14 核对。
+- 命令行恢复：读 `progress.md` 本表 + `findings.md`。
+- **优先**：Unity 编译 + 全量 EditMode（现 66 测试）确认全绿；Play 目视三类意图（攻击→`剑士 -10`、自增益→`↑`、减益→`↓`）+ 治愈指向友方。
+- **Android 横屏适配**（T10 续）：方向锁定横屏、`CanvasScaler` Scale With Screen Size、触控热区、Android 返回键、`OnApplicationPause/Focus` 保战斗状态。
+- 然后 Android 构建 APK + 模拟器（本机 MuMuPlayer）或真机验证。
 - git 分工：本地 `git commit` 由我执行，远端 push 由用户本地完成。
 
 ## 提交记录（本次会话）

@@ -47,6 +47,16 @@ namespace CQ.Core.Battle
         public IReadOnlyList<Unit> TurnOrder => _lastOrder;
         public IReadOnlyList<string> Hand => Deck.Hand;
 
+        /// <summary>本回合当前出手顺序（按需速度混排，输入阶段即最新；行动条读此）。</summary>
+        public IReadOnlyList<Unit> CurrentOrder
+        {
+            get
+            {
+                var alive = Ctx.Units.Where(u => !u.IsDead).ToList();
+                return SpeedSorter.Sort(alive, u => StatusResolver.EffectiveSpeedOfUnit(u, Ctx));
+            }
+        }
+
         private readonly Dictionary<string, CharacterConfig> _chars;
         private readonly Dictionary<string, EnemyConfig> _enemyCfgs;
         private readonly Dictionary<string, CardConfig> _cards;
@@ -54,6 +64,7 @@ namespace CQ.Core.Battle
         private readonly Dictionary<string, SkillPlan> _plan = new Dictionary<string, SkillPlan>();
         private readonly EnemyActionResolver _enemyResolver = new EnemyActionResolver();
         private readonly TurnManager _turns;
+        private readonly Dictionary<string, string> _lockedTargets = new Dictionary<string, string>();
         private IReadOnlyList<Unit> _lastOrder = new List<Unit>();
         private bool _started;
 
@@ -162,7 +173,29 @@ namespace CQ.Core.Battle
         {
             _plan.Clear();
             _lastOrder = new List<Unit>();
+            LockIntentTargets();
             Deck.Draw(1);
+        }
+
+        /// <summary>亮意图时预锁单体攻击/连击/蓄力/减益的目标（同 seed 确定）。</summary>
+        private void LockIntentTargets()
+        {
+            _lockedTargets.Clear();
+            var players = AlivePlayers();
+            foreach (var e in Enemies)
+            {
+                if (e.IsDead) continue;
+                var intent = CurrentIntentOf(e.Id);
+                if (intent == null || !NeedsTarget(intent)) continue;
+                var t = TargetSelector.PickTarget(Ctx, players);
+                if (t != null) _lockedTargets[e.Id] = t.Id;
+            }
+        }
+
+        private static bool NeedsTarget(IntentConfig intent)
+        {
+            if (intent.type == "multi" || intent.type == "charge" || intent.type == "debuff") return true;
+            return intent.type == "attack" && intent.target == "single";
         }
 
         private bool InputOpen => _started && !IsFinished && Flow == BattleFlow.Input;
@@ -186,8 +219,21 @@ namespace CQ.Core.Battle
             if (!_chars.TryGetValue(charId, out var cfg)) return false;
             var skill = FindSkill(cfg, skillId);
             if (skill == null || !SkillResolver.CanUse(skill, unit)) return false;
+            if (!TargetAllowed(skill, targetUnitId)) return false;
             _plan[charId] = new SkillPlan { Skill = skill, TargetId = targetUnitId };
             return true;
+        }
+
+        /// <summary>目标合法性：单目标治疗须友方，单目标伤害须敌方；全目标/自愈忽略选择。</summary>
+        private bool TargetAllowed(SkillSpec skill, string targetUnitId)
+        {
+            bool needsAlly = skill.heal != null && skill.heal.target == "single";
+            bool needsEnemy = skill.damage != null && skill.damage.target == "single";
+            if (!needsAlly && !needsEnemy) return true;
+
+            var target = Ctx.GetUnit(targetUnitId);
+            if (target == null || target.IsDead) return false;
+            return needsAlly ? target.Team == Team.Player : target.Team == Team.Enemy;
         }
 
         /// <summary>结束输入，跑本回合闭环。返回本回合出手顺序（含排序时存活单位）。</summary>
@@ -247,7 +293,8 @@ namespace CQ.Core.Battle
                 return;
             }
 
-            _enemyResolver.Resolve(Ctx, unit.Id, model);
+            _lockedTargets.TryGetValue(unit.Id, out var lockedTargetId);
+            _enemyResolver.Resolve(Ctx, unit.Id, model, lockedTargetId);
         }
 
         private Unit FirstAliveEnemy() => Enemies.FirstOrDefault(e => !e.IsDead);
@@ -277,6 +324,9 @@ namespace CQ.Core.Battle
             _intents.TryGetValue(enemyId, out var m) ? m : null;
 
         public IntentConfig CurrentIntentOf(string enemyId) => GetIntent(enemyId)?.CurrentIntent;
+
+        public string GetIntentTarget(string enemyId) =>
+            _lockedTargets.TryGetValue(enemyId, out var t) ? t : null;
 
         public CardConfig GetCard(string cardId) =>
             _cards.TryGetValue(cardId, out var c) ? c : null;

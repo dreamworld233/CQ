@@ -5,7 +5,8 @@ namespace CQ.Core.Combat
 {
     /// <summary>
     /// 结算敌人一个 IntentConfig。敌人目标是玩家方存活单位。
-    /// charge 不立即伤害，存 pendingChargeDamage；该敌人下一次行动先释放 nextDamage
+    /// 单体攻击/连击/减益用「亮意图时预锁定的目标」(lockedTargetId)，已死则回退权重随机。
+    /// charge 不立即伤害，存 pendingChargeDamage（含预锁目标）；该敌人下一次行动先释放 nextDamage
     /// 再执行本轮 intent。释放被 interrupt 取消当且仅当 蓄力 interruptible == true
     /// 且 ctx.HasStatus(敌人Id, Interrupt)。
     /// </summary>
@@ -15,6 +16,7 @@ namespace CQ.Core.Combat
         {
             public int Damage;
             public bool Interruptible;
+            public string TargetId;
         }
 
         private readonly Dictionary<string, PendingCharge> _pending = new Dictionary<string, PendingCharge>();
@@ -29,18 +31,19 @@ namespace CQ.Core.Combat
         }
 
         public void Resolve(CombatContext ctx, string enemyId, IntentConfig intent)
+            => Resolve(ctx, enemyId, intent, null);
+
+        public void Resolve(CombatContext ctx, string enemyId, IntentConfig intent, string lockedTargetId)
         {
             if (ctx == null || string.IsNullOrEmpty(enemyId) || intent == null) return;
-
             ReleasePending(ctx, enemyId);
-            ExecuteIntent(ctx, enemyId, intent);
+            ExecuteIntent(ctx, enemyId, intent, lockedTargetId);
         }
 
-        public void Resolve(CombatContext ctx, string enemyId, IntentModel model)
+        public void Resolve(CombatContext ctx, string enemyId, IntentModel model, string lockedTargetId)
         {
             if (ctx == null || string.IsNullOrEmpty(enemyId) || model == null) return;
-
-            Resolve(ctx, enemyId, model.CurrentIntent);
+            Resolve(ctx, enemyId, model.CurrentIntent, lockedTargetId);
             model.Advance();
         }
 
@@ -62,23 +65,24 @@ namespace CQ.Core.Combat
             bool cancelled = p.Interruptible && ctx.HasStatus(enemyId, StatusType.Interrupt);
             if (cancelled) return;
 
-            var target = TargetSelector.PickTarget(ctx, GetPlayerTargets(ctx));
+            var target = ResolveTarget(ctx, p.TargetId, GetPlayerTargets(ctx));
             if (target == null) return;
             Damage.Apply(ctx, new DamageRequest { Amount = p.Damage, SourceUnitId = enemyId, TargetUnitId = target.Id });
         }
 
-        private void ExecuteIntent(CombatContext ctx, string enemyId, IntentConfig intent)
+        private void ExecuteIntent(CombatContext ctx, string enemyId, IntentConfig intent, string lockedTargetId)
         {
             switch (intent.type)
             {
-                case "attack": Attack(ctx, enemyId, intent); break;
-                case "multi": Multi(ctx, enemyId, intent); break;
+                case "attack": Attack(ctx, enemyId, intent, lockedTargetId); break;
+                case "multi": Multi(ctx, enemyId, intent, lockedTargetId); break;
                 case "attackUp": AttackUp(ctx, enemyId, intent); break;
-                case "charge": Charge(ctx, enemyId, intent); break;
+                case "charge": Charge(ctx, enemyId, intent, lockedTargetId); break;
+                case "debuff": Debuff(ctx, enemyId, intent, lockedTargetId); break;
             }
         }
 
-        private void Attack(CombatContext ctx, string enemyId, IntentConfig intent)
+        private void Attack(CombatContext ctx, string enemyId, IntentConfig intent, string lockedTargetId)
         {
             var players = GetPlayerTargets(ctx);
             if (intent.target == "all")
@@ -88,15 +92,15 @@ namespace CQ.Core.Combat
             }
             else
             {
-                var t = TargetSelector.PickTarget(ctx, players);
+                var t = ResolveTarget(ctx, lockedTargetId, players);
                 if (t != null)
                     Damage.Apply(ctx, new DamageRequest { Amount = intent.damage, SourceUnitId = enemyId, TargetUnitId = t.Id });
             }
         }
 
-        private void Multi(CombatContext ctx, string enemyId, IntentConfig intent)
+        private void Multi(CombatContext ctx, string enemyId, IntentConfig intent, string lockedTargetId)
         {
-            var t = TargetSelector.PickTarget(ctx, GetPlayerTargets(ctx));
+            var t = ResolveTarget(ctx, lockedTargetId, GetPlayerTargets(ctx));
             if (t == null) return;
             for (int i = 0; i < intent.hits; i++)
                 Damage.Apply(ctx, new DamageRequest { Amount = intent.damage, SourceUnitId = enemyId, TargetUnitId = t.Id });
@@ -114,9 +118,33 @@ namespace CQ.Core.Combat
             });
         }
 
-        private void Charge(CombatContext ctx, string enemyId, IntentConfig intent)
+        private void Charge(CombatContext ctx, string enemyId, IntentConfig intent, string lockedTargetId)
         {
-            _pending[enemyId] = new PendingCharge { Damage = intent.nextDamage, Interruptible = intent.interruptible };
+            _pending[enemyId] = new PendingCharge { Damage = intent.nextDamage, Interruptible = intent.interruptible, TargetId = lockedTargetId };
+        }
+
+        private void Debuff(CombatContext ctx, string enemyId, IntentConfig intent, string lockedTargetId)
+        {
+            var t = ResolveTarget(ctx, lockedTargetId, GetPlayerTargets(ctx));
+            if (t == null) return;
+            ctx.AddStatus(t.Id, new StatusEffect
+            {
+                Type = StatusTypes.Parse(intent.debuffType),
+                Percent = intent.debuffPercent,
+                Duration = intent.debuffDuration > 0 ? intent.debuffDuration : 1,
+                Turn = "round",
+                SourceUnitId = enemyId
+            });
+        }
+
+        private static Unit ResolveTarget(CombatContext ctx, string lockedTargetId, IReadOnlyList<Unit> players)
+        {
+            if (!string.IsNullOrEmpty(lockedTargetId))
+            {
+                var u = ctx.GetUnit(lockedTargetId);
+                if (u != null && !u.IsDead) return u;
+            }
+            return TargetSelector.PickTarget(ctx, players);
         }
     }
 }

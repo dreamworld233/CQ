@@ -127,23 +127,37 @@ namespace CQ.Runtime
             foreach (var u in _engine.Ctx.Units)
             {
                 if (!_views.TryGetValue(u.Id, out var v)) continue;
-                string intent = u.Team == Team.Enemy ? IntentLabel(_engine.CurrentIntentOf(u.Id)) : "";
+                string intent = (u.Team == Team.Enemy && !u.IsDead) ? IntentText(u.Id, _engine.CurrentIntentOf(u.Id)) : "";
                 v.Refresh(u, intent);
                 v.SetColor(UnitColor(u, u.IsDead));
             }
         }
 
-        private static string IntentLabel(IntentConfig it)
+        private string IntentText(string enemyId, IntentConfig it)
         {
             if (it == null) return "";
             switch (it.type)
             {
-                case "attack": return it.target == "all" ? "全体" : "攻击";
-                case "multi": return "连击x" + it.hits;
-                case "charge": return "蓄力!";
-                case "attackUp": return "强化";
-                default: return it.type;
+                case "attack":
+                    return it.target == "all" ? "全体 -" + it.damage : SingleTargetText(enemyId, it.damage);
+                case "multi":
+                    return SingleTargetText(enemyId, it.damage * it.hits);
+                case "charge":
+                    return "蓄 " + SingleTargetText(enemyId, it.nextDamage);
+                case "attackUp":
+                    return "↑";
+                case "debuff":
+                    return "↓";
+                default:
+                    return it.type;
             }
+        }
+
+        private string SingleTargetText(string enemyId, int damage)
+        {
+            string targetId = _engine.GetIntentTarget(enemyId);
+            string name = targetId != null ? UnitName(targetId) : "单体";
+            return name + " -" + damage;
         }
 
         // ---------- 玩家指令 ----------
@@ -163,8 +177,31 @@ namespace CQ.Runtime
         private void ChooseSkill(string skillId)
         {
             if (_engine == null || string.IsNullOrEmpty(_selectedActor)) return;
+            var skill = FindSkillSpec(_selectedActor, skillId);
+            if (skill != null)
+            {
+                if (skill.heal != null && skill.heal.target == "single")
+                {
+                    var t = _engine.Ctx.GetUnit(_selectedTarget);
+                    if (t == null || t.Team != Team.Player) _selectedTarget = _selectedActor;
+                }
+                else if (skill.damage != null && skill.damage.target == "single")
+                {
+                    var t = _engine.Ctx.GetUnit(_selectedTarget);
+                    if (t == null || t.Team != Team.Enemy)
+                        _selectedTarget = _engine.Enemies.FirstOrDefault(e => !e.IsDead)?.Id;
+                }
+            }
             if (_engine.ChooseSkill(_selectedActor, skillId, _selectedTarget))
                 Log(UnitName(_selectedActor) + " 选择 " + SkillName(_selectedActor, skillId));
+        }
+
+        private SkillSpec FindSkillSpec(string charId, string skillId)
+        {
+            var skills = _engine.SkillsOf(charId);
+            if (skills == null) return null;
+            foreach (var s in skills) if (s.id == skillId) return s;
+            return null;
         }
 
         private void EndRound()
@@ -235,7 +272,7 @@ namespace CQ.Runtime
             if (_engine.IsFinished)
                 GUILayout.Label(_engine.Winner == Team.Player ? "我方胜利" : "我方失败");
 
-            var order = _engine.TurnOrder;
+            var order = _engine.CurrentOrder;
             if (order == null || order.Count == 0)
             {
                 GUILayout.Label("(尚未出手)");
@@ -262,6 +299,7 @@ namespace CQ.Runtime
             DrawSkills();
             GUILayout.EndHorizontal();
 
+            DrawAllyTargets();
             DrawHand();
             DrawControls();
         }
@@ -273,7 +311,8 @@ namespace CQ.Runtime
             foreach (var e in _engine.Enemies)
             {
                 bool sel = e.Id == _selectedTarget;
-                string line = (sel ? "▶ " : "") + e.Name + " " + e.Hp + "/" + e.MaxHp + " | " + IntentLabel(_engine.CurrentIntentOf(e.Id));
+                string line = (sel ? "▶ " : "") + e.Name + " " + e.Hp + "/" + e.MaxHp
+                    + (e.IsDead ? "" : " | " + IntentText(e.Id, _engine.CurrentIntentOf(e.Id)));
                 if (GUILayout.Button(line)) _selectedTarget = e.Id;
             }
             GUILayout.EndVertical();
@@ -291,7 +330,6 @@ namespace CQ.Runtime
                 if (GUILayout.Button(line))
                 {
                     _selectedActor = p.Id;
-                    _selectedTarget = p.Id;
                 }
             }
             GUILayout.EndVertical();
@@ -315,6 +353,19 @@ namespace CQ.Runtime
                 GUILayout.EndHorizontal();
             }
             GUILayout.EndVertical();
+        }
+
+        private void DrawAllyTargets()
+        {
+            GUILayout.Label("— 友方目标（治愈指向）—");
+            GUILayout.BeginHorizontal();
+            foreach (var p in _engine.Players)
+            {
+                bool sel = p.Id == _selectedTarget;
+                string line = (sel ? "▶ " : "") + p.Name + " " + p.Hp + "/" + p.MaxHp;
+                if (GUILayout.Button(line)) _selectedTarget = p.Id;
+            }
+            GUILayout.EndHorizontal();
         }
 
         private void DrawHand()

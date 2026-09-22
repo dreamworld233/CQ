@@ -15,6 +15,9 @@ namespace CQ.Core.Config
         public int buffDuration;  // attackUp 持续回合（蓄力强化：跨到下一击）
         public int nextDamage;    // charge 下一回合伤害
         public bool interruptible;
+        public string debuffType;   // debuff 状态 id（weaken/slow）
+        public int debuffPercent;   // debuff 百分比
+        public int debuffDuration;  // debuff 持续回合
     }
 
     [Serializable]
