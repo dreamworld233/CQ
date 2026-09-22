@@ -81,4 +81,19 @@ public class BalanceTests
                 foreach (var enemyId in wave.enemies)
                     Assert.IsTrue(ids.Contains(enemyId), level.name + " 引用了未定义的敌人 " + enemyId);
     }
+
+    [Test]
+    public void All_Levels_Terminate_Under_AutoBasic()
+    {
+        for (int id = 1; id <= 3; id++)
+        {
+            var eng = BuildLevel(id, 7);
+            eng.StartBattle();
+
+            int guard = 0;
+            while (!eng.IsFinished && guard < 200) { eng.EndRound(); guard++; }
+
+            Assert.IsTrue(eng.IsFinished, "第 " + id + " 关应在 200 回合内结束（无死循环）");
+        }
+    }
 }
