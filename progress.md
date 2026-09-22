@@ -46,6 +46,19 @@
 - 待办：Unity 打开工程编译 + Test Runner 跑 EditMode；确认无引擎编译错。
 - 验证结果：Unity 编译通过（修复 CS0411 泛型推断，`LoadAll<T>` 加显式类型参数）+ EditMode 测试无报错全过（用户确认）。
 
+### 阶段 5：实现（T2）
+- **状态：** complete（文件层；待 Unity 编译 + 跑 NUnit 验证）
+- 执行的操作：
+  - `Core/Combat/Unit.cs` + `Team.cs`（冻结契约 Unit 提前落地，字段/方法齐全）。
+  - `Core/Mathd.cs`（`FloorToInt` 去尾统一入口）。
+  - `Core/Battle/Rng.cs`（xorshift64* 可注入 seed）、`SpeedSorter.cs`（有效速度 + 同速我方先 + 稳定序）、`ActionQueue.cs`、`TurnManager.cs`（回合状态机骨架 + 胜负）。
+  - EditMode `SpeedSorterTests.cs` + `TurnManagerTests.cs`。
+- 创建/修改的文件：
+  - `Assets/Scripts/Core/Combat/{Team,Unit}.cs`
+  - `Assets/Scripts/Core/Mathd.cs`
+  - `Assets/Scripts/Core/Battle/{Rng,SpeedSorter,ActionQueue,TurnManager}.cs`
+  - `Assets/Tests/EditMode/{SpeedSorterTests,TurnManagerTests}.cs`
+
 ## 测试结果
 | 测试 | 输入 | 预期结果 | 实际结果 | 状态 |
 |------|------|---------|---------|------|
@@ -59,7 +72,7 @@
 ## 五问重启检查
 | 问题 | 答案 |
 |------|------|
-| 我在哪里？ | T1 完成 + EditMode 全绿，待 T2 |
+| 我在哪里？ | T2 文件完成，待 Unity 编译 + NUnit，然后进 T3–T6 并行 |
 | 我要去哪里？ | 剩余实现阶段 |
 | 目标是什么？ | 2 周可玩可讲的 2.5D 回合制垂直切片 |
 | 我学到了什么？ | 见 findings.md |

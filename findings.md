@@ -39,6 +39,7 @@
 | JSON 反序列化放 Runtime（`ConfigJson`/`ConfigLoader`），Core 只留纯 DTO + `ConfigValidator` | JsonUtility 属 `UnityEngine.JSONSerializeModule`，与 Core「零引擎引用」冲突；纯 DTO 仍可被外部 headless 解析器复用 |
 | `intents` 用数组带 `id`（非 map）、每实体一 JSON 文件（非顶层数组） | JsonUtility 无 Dictionary/顶层数组支持 |
 | 卡池 8 张 = 6 个独特卡定义，`count` 合计 8 | 任务清单 8 卡与 schema 6 种效果一致 |
+| 单位 id 统一 string（= 配置 id） | 配置 id 是字符串；契约原 `int unitId` 与配置冲突，改 string，`Dictionary<string,List<StatusEffect>>` |
 
 ## 遇到的问题
 | 问题 | 解决方案 |

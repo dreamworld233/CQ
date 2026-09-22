@@ -22,9 +22,10 @@ T1 脚手架+DTO+配置加载
 
 - `Unit`：`Id, Hp, MaxHp, BaseSpeed, Row, AggroWeight, Energy, MaxEnergy, Ult, MaxUlt`；方法 `TakeDamage(int), Heal(int), GainEnergy(int), GainUlt(int), IsDead`。
 - `IDamageResolver`：`DamageResult ResolveDamage(in DamageRequest req, CombatContext ctx)`。
-- `IStatusResolver`：`void Apply(int unitId, StatusEffect fx, CombatContext ctx)`。
-- `ICardEffect`：`void Resolve(CombatContext ctx, int targetUnitId)`。
-- `CombatContext`：持有 `List<Unit>`、`Rng`、`Dictionary<int, List<StatusEffect>>`，作为所有 resolver 的唯一上下文。
+- `IStatusResolver`：`void Apply(string unitId, StatusEffect fx, CombatContext ctx)`。
+- `ICardEffect`：`void Resolve(CombatContext ctx, string targetUnitId)`。
+- `CombatContext`：持有 `List<Unit>`、`Rng`、`Dictionary<string, List<StatusEffect>>`，作为所有 resolver 的唯一上下文。
+- 单位 id 统一 `string`（= 配置 id，如 `sword`），所有 `unitId`/`targetUnitId` 均 string。
 - 去尾取整统一走 `Mathd.FloorToInt`（Core 层禁止 `UnityEngine.Mathf`）。
 
 ## 第 1 周任务（骨架）
@@ -46,12 +47,12 @@ T1 脚手架+DTO+配置加载
 
 ### T2 回合管理器（依赖 T1）
 
-- [ ] **T2.1 SpeedSorter**
-  - 产出：`Core/Battle/SpeedSorter.cs`。
-  - 验收：`SpeedSorterTests` 覆盖「同速我方先」「同方同速稳定序」「提速/降速只改本回合」。
-- [ ] **T2.2 TurnManager 状态机骨架 + ActionQueue**
-  - 产出：`Core/Battle/TurnManager.cs`、`ActionQueue.cs`、`Rng.cs`。
-  - 验收：状态机走完 `RoundStart→排序→行动→DeathCheck→RoundEnd` 空跑不崩。
+- [x] **T2.1 SpeedSorter**
+  - 产出：`Core/Battle/SpeedSorter.cs`（含 `EffectiveSpeed` 去尾）、`Core/Mathd.cs`（`FloorToInt` 统一入口）。
+  - 验收：`SpeedSorterTests` 覆盖「同速我方先」「同方同速稳定序」「提速/降速只改本回合」「有效速度去尾」。
+- [x] **T2.2 TurnManager 状态机骨架 + ActionQueue**
+  - 产出：`Core/Battle/TurnManager.cs`、`ActionQueue.cs`、`Rng.cs`；`Core/Combat/Unit.cs`、`Team.cs`（契约 Unit 提前落地）。
+  - 验收：状态机走完 `RoundStart→排序→行动→DeathCheck→RoundEnd` 空跑不崩；`TurnManagerTests` 覆盖行动顺序、死亡跳过、胜负判定、注入速度改序。
 
 ### T3 角色三循环（依赖 T1；并行组 A）
 
