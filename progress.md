@@ -109,6 +109,16 @@
   - `tasks.md`、`progress.md`、`findings.md`
 - 待办：Unity 编译 + 跑全量 EditMode（现 57 测试）。
 
+### 阶段 9：实现（T9 意图完整结算 + 存牌爆发点验证）
+- **状态：** complete（文件层；待 Unity 编译 + 跑 NUnit 验证）
+- 执行的操作：
+  - `IntentFlowTests.cs` 3 测试：AOE 意图打全体存活玩家；打断后游标不前进、下回合重新亮同意图；跨回合存牌 + 同回合多出（爆发）。
+  - 核对 `战斗设计.md` 第八节打断边界，与 BattleEngine 打断路径一致。
+- 创建/修改的文件：
+  - `Assets/Tests/EditMode/IntentFlowTests.cs`
+  - `tasks.md`、`progress.md`、`findings.md`
+- 待办：Unity 编译 + 跑全量 EditMode（现 60 测试）。
+
 ## 测试结果
 | 测试 | 输入 | 预期结果 | 实际结果 | 状态 |
 |------|------|---------|---------|------|

@@ -53,6 +53,9 @@
 - 打断跳回合用 `EnemyActionResolver.ResolveSkipped`：只走蓄力释放路径，`interruptible` 蓄力被取消（拆大招已成立）。
 - T8 已修：`IntentConfig.buffDuration` 承接攻增跨回合（杂兵 `attackUp` 设 `buffDuration:2`），EnemyActionResolver 不再硬编码 `Duration=1`；`ConfigValidator` 补 attackUp 校验。
 
+- T9 验证：AOE（`attack target=all`）此前无测试，已补；打断跳过不推进意图游标，下回合重新亮同一意图（对齐 `战斗设计.md` 第八节）。
+- 表现层待办（并入 T10）：蓄力待释放的 120 伤害不在下回合意图图标出现，可在敌人头顶加「待释放蓄力」角标做二次预告。
+
 ## 资源
 - `demo任务清单.md`（需求源头）
 - `战斗设计.md`（战斗规则源头）

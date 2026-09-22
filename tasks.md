@@ -110,7 +110,9 @@ T1 脚手架+DTO+配置加载
 - [x] T8 数值配平 + 3 敌模板 + 3 关编排
   - 产出：杂兵 `baseSpeed 4→7`（教敌我混排）；`IntentConfig.buffDuration`（攻增跨回合，修「attackUp 当回合即失效」平衡坑）；3 敌模板/3 关编排落表现状；`BalanceTests` 4 测试。
   - 验收：`Level1_AutoBasic_IsWinnable`（纯普攻可过）、`Level1_TurnOrder_IsMixed`（混排）、`Lord_Has_Interruptible_Charge`（第 2 关教学）、`All_Wave_Enemy_Ids_Resolve`（引用无缺失）。
-- [ ] T9 意图完整结算 + 存牌爆发点验证
+- [x] T9 意图完整结算 + 存牌爆发点验证
+  - 产出：`IntentFlowTests.cs` 3 测试（AOE 打全体 / 打断后下回合重新亮同意图 / 跨回合存牌+同回合多出）。
+  - 验收：蓄力/攻增/AOE/连击结算齐全；打断边界对齐 `战斗设计.md` 第八节；boss 强意图→打断→本回合不出手成立；存牌可同回合多出。
 - [ ] T10 2.5D 表现（左侧行动条 / 前后排站位 / 意图图标 / 手牌）
 - [ ] T11 打磨 + 数值微调
 - [ ] T12 完整回归（NUnit 全量 + 确定性 + 零硬编码抽查）
