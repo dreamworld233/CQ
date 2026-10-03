@@ -1,5 +1,62 @@
 # 进度日志
 
+## 0. 收工快照 / 恢复手册（2026-10-03 收盘）
+
+### 一句话状态
+阶段 25（TMP 全迁 + 数值表现强化）与阶段 25.1（缺字形警告修复）已完成并提交；工作区干净；Unity 全量 EditMode **75/75 通过**。下一步是 **Play 目视**，然后打包真机复验。
+
+### 交付物与提交（本地 `main`）
+| 提交 | 内容 |
+|------|------|
+| 6dd5df2 | TMP 迁移 + 数值表现强化 + Core 结算事件日志（当时 74/74 绿） |
+| e023169 | 文档：记录 6dd5df2 + 下一件 |
+| 0f8fa45 | 修 TMP 缺字形警告（✕ 无字形 + 图集 1024→2048 + 多图集）（75/75 绿） |
+- `git status` 干净；远端 push 由用户本地执行（沙箱无法访问 github.com）。
+
+### 恢复步骤（新开窗口照做）
+1. 读 `progress.md`（本手册 + 阶段 25 / 25.1）+ `findings.md` 的「TMP 迁移与数值表现（阶段 25）」节。
+2. 打开 Unity 工程 `G:\unity\CQ`（Unity 2022.3.62f2）。`Library/` 已在，首次打开会重编脚本；`Temp/` 不存在属正常（Unity 启动自建）。
+3. **Play 目视验收清单**：
+   - 血条加粗 + 条上 `HP/MAX` + 25/50/75% 刻度 + 残血脉冲；
+   - 飘字（按伤害量放大、弹入、约 1.4s）+ 受击闪白/抖动；
+   - 左栏「战报」逐条「谁〔技能〕 → 打谁 -N」；
+   - 中文显示正常（思源黑体 SDF）；
+   - Console **无** `The character with Unicode value ... was not found` 警告；
+   - 3 关流程可打通，「下一关」按钮正常。
+4. 通过后：打包 APK → 真机/MuMu 复验横屏 + 触控 + 返回键 → T13 录屏 → T14 验收清单。
+
+### 跑测试的标准命令（PowerShell）
+```powershell
+& "G:\unity\Unity_2022.3.62f2\Editor\Unity.exe" -batchmode -nographics -projectPath "G:\unity\CQ" `
+  -runTests -testPlatform EditMode -testResults "G:\unity\CQ\Logs\editmode.xml" `
+  -logFile "G:\unity\CQ\Logs\batchmode.log"
+```
+- **不要加 `-quit`**：加了会在导入完成后立刻退出，一条测试都不跑、也不产出结果 XML。
+- 结果/日志**不要写进 `Temp/`**：Unity 启动时会删掉工程 `Temp/` 目录。
+- 受限沙箱下 Unity 因许可证 IPC（命名管道）不可达而返回码 **199**；需放宽沙箱后再跑（本会话用 danger-full-access 跑通）。
+- 跑完（含 Play）后，两份 `Assets/Resources/Fonts/*SDF.asset` 会被写回字形缓存（各涨到 ~2MB，且图集像素其实没写进去），**必须还原**：
+  `git checkout -- "Assets/Resources/Fonts/SourceHanSansHWSC-Regular SDF.asset" "Assets/Resources/Fonts/SourceHanSansHWSC-Bold SDF.asset"`
+  本手册所述「图集 2048 + 多图集」改动已在 `0f8fa45` 提交，所以 checkout 会还原成「正确配置 + 空图集」，不会丢东西。
+- `Logs/`（已 gitignore）留有本会话证据：`editmode-atlas.xml`（75/75 全绿）、`editmode-final.xml`（74/74）、`batchmode-*.log`；临时诊断脚本 `cmap_gid.py`（解析 `.otf` cmap 报告码点→字形 id）、`char_budget.py`（统计工程可显示字符数）、`memos_inspect.py`（只读查看 memos 库）。
+
+### memos 记忆插件（本次启用）
+- 状态：**已启用**。改动文件 `C:\Users\19793\.dsh\profiles\web\cordis.patch.yml` —— 删除了原先的 loader patch 条目 `- id: memos-local-memory` / `disabled: true`；插件 bundle `@memtensor/memos-local-plugin@2.0.20` 自带默认行（`enabled / recallEnabled / captureEnabled / toolsEnabled` 全 true）。`patchReload: live`，改完即生效。
+- 运行态证据：viewer 端口 `127.0.0.1:18801` 可连（connect=True，且 patch 保存后新起了 node 进程）；`api_logs` 随本次 `memos_search` 增长（890 → 896）；成功召回 9/23–9/25 的历史 trace。
+- 数据：`C:\Users\19793\.dsh\memos-plugin\data\memos.db`（2.5MB，未改动内容）。
+- 已知遗留：`traces` 仍 32 条、最新时间戳 2026-09-30 —— 插件行被 disable 期间**今天（10/3）的对话没有入库**；启用后新回合/新会话应恢复记录，下次开机可用 `memos_search` 验证。另 `embedding_retry_queue` 有 32 条 pending、`api_logs` 有 `system_error` / `system_model_status`：本地嵌入模型没跑起来，语义召回退化为 FTS 关键词召回（能召回，排序偏弱）。要修就按插件 README 查模型下载/网络。
+- 关闭方式（如需）：在同一个 patch 文件末尾加回
+  ```yaml
+  - id: memos-local-memory
+    disabled: true
+  ```
+- 提示：**`progress.md` 才是可靠记录**，memos 只作辅助召回。
+
+### 环境速查
+- Unity：`G:\unity\Unity_2022.3.62f2`（AndroidPlayer 内置 SDK/NDK/JDK11；构建须走内置 JDK11，当前 `JAVA_HOME=G:\jdk21`）。
+- Android：包名 `com.dreamworld233.cq`、横屏左、ARMv7+ARM64、minSdk 22、IL2CPP（菜单 `CQ/配置 Android PlayerSettings`）。
+- 已有产物：`APK/CQ_v0.1.1.apk`（45MB，2026-09-23；TMP/数值改动后需重打）。
+- 诊断日志开关：`BattleController.verboseClick`、`RadialSkillMenu.verbose`（当前仍为 true，确认没问题后可关）。
+
 ## 会话：规划阶段
 
 ### 阶段 1：读取需求与环境
@@ -355,29 +412,39 @@
 ## 测试结果
 | 测试 | 输入 | 预期结果 | 实际结果 | 状态 |
 |------|------|---------|---------|------|
-| - | - | - | - | - |
+| 全量 EditMode（阶段 25 后，74 条） | `Unity.exe -batchmode -runTests -testPlatform EditMode` | 全绿 | total=74 passed=73 failed=1（`FontAssetTests` 世界高度断言写错，测试自身 bug） | 修测试后复跑 |
+| 全量 EditMode（同上，修断言后） | 同上 | 全绿 | total=74 passed=74 failed=0 | 通过 |
+| 全量 EditMode（阶段 25.1，加字符覆盖用例 75 条） | 同上 | 全绿 | total=75 passed=74 failed=1（`Ui_Symbols_...` 缺 U+5173 → 暴露图集容量不足） | 修图集后复跑 |
+| 全量 EditMode（图集 2048 + 多图集） | 同上 | 全绿 + 0 缺字形警告 | total=75 passed=75 failed=0；日志 `was not found / Unable to add / atlas texture` 计数 0 | **通过** |
+| 离线纯 Core 49 条（`Temp/CoreCheck`，非交付物） | `dotnet run`（自写 NUnit 断言替身） | 全过 | 通过 49 / 失败 0 | 通过（证据辅助） |
+| `dotnet build CQ.Runtime.csproj` | Unity 生成的 csproj + 手补 TMP 引用 | 0 error | 0 error 0 warning | 通过 |
 
 ## 错误日志
 | 时间戳 | 错误 | 尝试次数 | 解决方案 |
 |--------|------|---------|---------|
 | 规划 | git/github 不可达（schannel 无凭据；DNS 非公网 IP） | 2 | 沙箱无网络，改由用户本地执行 reset |
+| 2026-10-03 | Unity batchmode 返回码 199：`Connection to channel LicenseClient-... refused` → 许可证客户端 IPC 不可达 | 2 | 受限沙箱的命名管道限制；放宽沙箱（danger-full-access）后正常 |
+| 2026-10-03 | `-runTests` 同时带 `-quit`：Unity 导入完就退出，0 测试执行、无结果 XML | 1 | 去掉 `-quit`，测试跑完自行退出 |
+| 2026-10-03 | TMP 缺字形警告 `Unicode value \u2715 was not found ... replaced by \u25A1` | 3 | 双根因：✕ 字形不存在（改 ×）+ 图集 1024 只装约 80 个 CJK 字形（改 2048 + 多图集）。见阶段 25.1 |
+| 2026-10-03 | 测试用 `textBounds` 断言世界高度失败（读到 6.95 而非 0.3） | 1 | `textBounds` 是文字局部空间；世界高度须读渲染器 `bounds` |
+| 2026-10-03 | 临时 `.NET` 离线跑 Core 测试：Unity 自带 `nunit.framework.dll`（net35）`Assert` 依赖 `CallContext` → `TypeLoadException` | 1 | 自写最小断言替身（`Temp/CoreCheck`，已被 Unity 清理，可重建） |
 
 ## 五问重启检查
 | 问题 | 答案 |
 |------|------|
-| 我在哪里？ | 阶段 25 代码完成：TMP 全迁（含字体材质自愈）+ 数值表现强化（血条/条上数值/飘字/闪白抖动/战报）；Unity 全量 EditMode 74/74 通过。Play 目视待用户 |
-| 我要去哪里？ | Play 目视 → 打包真机复验（横屏/触控/返回键）→ 剩余素材接线（意图图标已接、选中框/技能图标/面板底后补）→ T13 录屏 → T14 验收 |
+| 我在哪里？ | 阶段 25 + 25.1 完成并提交（`0f8fa45`）：TMP 全迁（含字体材质自愈、图集 2048 + 多图集）+ 数值表现强化（血条/条上数值/飘字/闪白抖动/战报）；Unity 全量 EditMode **75/75 绿**。仅剩 Play 目视 |
+| 我要去哪里？ | Play 目视（Console 无缺字形警告）→ 打包真机复验（横屏/触控/返回键）→ 剩余素材接线（选中框 9-slice、9 技能图标、lord 示意图）→ T13 录屏 → T14 验收 |
 | 目标是什么？ | Android 横屏可玩可讲的 2.5D 回合制垂直切片 |
-| 我学到了什么？ | 资产「看起来导入了」不等于可用（SDF 资产 material 为空 → 文字必不显示）；TMP 的 `textBounds` 是局部空间，世界尺寸要读渲染器 bounds；Dynamic 字体资产会把字形缓存写回资产且像素未必真写入，别提交；引擎级事件日志放 Core 但**只给机器 id**，文案留表现层 |
-| 我做了什么？ | 阶段 17 Android 适配 + 18 诊断 + 19 修真机蓝屏 + 20 uGUI 重做 + 21 素材盘点 + 22 表现层接线 + 23 定位真根因 + 24 指向/数值/难度（已验收）+ **25 TMP 迁移 + 数值表现强化** |
+| 我学到了什么？ | 资产「看起来导入了」不等于可用（SDF 资产 material 为空 → 文字必不显示）；TMP `textBounds` 是局部空间，世界尺寸要读渲染器 bounds；Dynamic 字体资产会把字形缓存写回资产且像素未必真写入，别提交；字体图集容量会静默变成 □（1024² 只装约 80 个 CJK 字形，本项目文案有 364 个汉字）；引擎级事件日志放 Core 但**只给机器 id**，文案留表现层 |
+| 我做了什么？ | 阶段 17 Android 适配 + 18 诊断 + 19 修真机蓝屏 + 20 uGUI 重做 + 21 素材盘点 + 22 表现层接线 + 23 定位真根因 + 24 指向/数值/难度（已验收）+ **25 TMP 迁移 + 数值表现强化** + **25.1 缺字形修复** |
 
 ## 下次继续（从这开始）
-- **新窗口恢复**：读 `progress.md` 阶段 25 + `findings.md`「TMP 迁移与数值表现（阶段 25）」节；再看 `Assets/Scripts/Runtime/` 下 `TmpKit.cs`（字体装载/定标）/ `UiKit.cs` / `BattleUi.cs` / `UnitView.cs` / `FloatingText.cs` / `BattleController.cs`。
-- **当前可用状态**：Play 直接跑（无需搭场景，`BattleController` 有 `[RuntimeInitializeOnLoadMethod]` 自举）。点我方角色 → 头顶弧 3 圆钮 → 点敌/友方索敌 → 结束回合。3 关可打。全量 EditMode 74/74 绿。
-- **第一件**：Play 目视复核 —— 血条（加粗/刻度/条上 `HP/MAX`/残血脉冲）、飘字（更大更久/按伤害放大）、受击闪白 + 抖动、左栏「战报」逐条伤害、中文字体（思源黑体 SDF）。常量都在 `UnitView`（顶部布局常量）与 `FloatingText`（`Life`/`Pop*`/`MinH`/`MaxH`）。
+- **先看第 0 节「收工快照 / 恢复手册」**：里面有恢复步骤、Play 验收清单、跑测试命令与坑、memos 插件状态、环境速查。
+- **新窗口恢复**：读 `progress.md` 阶段 25 / 25.1 + `findings.md`「TMP 迁移与数值表现（阶段 25）」节；再看 `Assets/Scripts/Runtime/` 下 `TmpKit.cs`（字体装载/定标/图集）/ `UiKit.cs` / `BattleUi.cs` / `UnitView.cs` / `FloatingText.cs` / `BattleController.cs`。
+- **当前可用状态**：Play 直接跑（无需搭场景，`BattleController` 有 `[RuntimeInitializeOnLoadMethod]` 自举）。点我方角色 → 头顶弧 3 圆钮 → 点敌/友方索敌 → 结束回合。3 关可打。全量 EditMode 75/75 绿。
+- **第一件**：Play 目视复核 —— 血条（加粗/刻度/条上 `HP/MAX`/残血脉冲）、飘字（更大更久/按伤害放大）、受击闪白 + 抖动、左栏「战报」逐条伤害、中文字体，且 Console 无缺字形警告。常量在 `UnitView`（顶部布局常量）与 `FloatingText`（`Life`/`Pop*`/`MinH`/`MaxH`）。
 - **第二件**：`按钮选中框.png` 作按钮/面板底框（9-slice）；技能图标 9 个后补；lord 示意图后补；确认无误后关掉 `verboseClick`（`BattleController`）/ `verbose`（`RadialSkillMenu`）诊断日志。
 - **第三件（后置）**：卡牌交互接回（uGUI 底部手牌面板）；`BattleEngine.RoundEvents` 已带 `Kind=Card` 分支与 `IntentLabel`，接回即用。接回后蓄力可被打断，领主关可再调硬（现 `lord.json` 蓄力 50 是为「无打断卡」而降的）。
-- **第四件**：若要在编辑器/CI 跑测试 —— `Unity.exe -batchmode -runTests -testPlatform EditMode -testResults <不在 Temp 下> -logFile <不在 Temp 下>`（**不要加 `-quit`**）；跑完记得 `git checkout -- "Assets/Resources/Fonts/*SDF.asset"` 还原字形缓存。
 - 之后：打包真机复验（横屏 + 触控 + 返回键）→ T13 录屏 → T14 验收。
 - 提交：本地 `git commit` 由我执行；远端 push 用户本地完成。
 
@@ -401,6 +468,9 @@
 | 8271ccc | 意图三分类 + 治愈选友方 + 目标预锁 + 减益意图 + 修 2 bug |
 | cdd014b | uGUI 交互重做 + 表现层接线 + 点选真根因修复（阶段 19–24）+ 字体/示意图/TMP 资源 |
 | 6dd5df2 | TMP 全迁（材质自愈）+ 数值表现强化 + Core 结算事件日志 + 74/74 EditMode 全绿 |
+| e023169 | 文档：记录 6dd5df2 + 下一件（Play 目视） |
+| 0f8fa45 | 修 TMP 缺字形警告（✕ 无字形 + 图集 1024→2048 + 多图集）+ 字符覆盖回归 + 75/75 全绿 |
+| （未提交，不属仓库） | `C:\Users\19793\.dsh\profiles\web\cordis.patch.yml` 启用 memos 插件；`Logs/` 下证据与临时脚本（gitignore） |
 
 ---
 
