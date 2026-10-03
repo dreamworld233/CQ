@@ -77,7 +77,8 @@ namespace CQ.Runtime
                 Vector2 pos = anchor + new Vector2(Mathf.Cos(rad), Mathf.Sin(rad)) * Radius;
 
                 bool usable = canUse != null && canUse(s);
-                string label = usable ? s.name : s.name + "\n✕";
+                // 不可用标记用 ×(U+00D7)：✕(U+2715) 不在思源黑体字形表里，TMP 会换成 □ 并刷警告
+                string label = usable ? s.name : s.name + "\n×";
                 var btn = UiKit.MakeCircleButton(_canvas, label, 30, usable ? UsableBg : DisabledBg, Diameter);
                 btn.name = "Skill_" + s.id;
                 btn.interactable = usable;

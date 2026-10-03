@@ -300,6 +300,22 @@
 - 验证结果：用户确认「流程能跑通」（选目标不再被顶掉、数值可见、领主关能过）。
 - 用户新反馈（延后，不着急）：**血条与伤害数值还不够醒目**，要更明显的数值表现（更大字号/更长的血条/伤害数字更突出/掉血闪白等）。
 
+### 阶段 25.1：修缺字形警告（✕ U+2715 + 图集容量）
+- **状态：** complete（Unity 全量 EditMode 75/75 通过；日志内 TMP 缺字形警告计数 0）
+- 用户实测反馈：Play 正常、击中与飘字效果满意；刷一条警告
+  `The character with Unicode value \u2715 was not found in the [SourceHanSansHWSC-Bold SDF] font asset ... replaced by Unicode character \u25A1`。
+- 定位（两条独立原因）：
+  1. ✕(U+2715) 确实不在思源黑体 cmap（Python 解析 `.otf` 得 glyph 0）→ 技能按钮「不可用」标记改 ×(U+00D7)。
+  2. 图集容量不足：资产图集 1024² + 未开多图集，pointSize 90/padding 9 下只装约 80 个 CJK 字形；demo 全部可显示文案统计有 **364 个不同汉字** → 用满后新汉字全变 □。诊断证据：新增 关(U+5173)/并(U+5E76) 失败，但已缓存的字返回 true，图集 `used102/free77` 无空位；同字体 cmap 里 U+5173 → glyph 10921（非 0），坐实是容量问题。
+- 修法：两份 SDF 资产 `m_AtlasWidth/Height` 1024→2048、自由矩形 1023→2047、多图集 0→1；`TmpKit.EnsureUsable` 运行时兜底再开多图集；新增 `FontAssetTests.All_Demo_Text_Fits_In_Font_Assets`（配置全名称 + UI 文案灌入两份资产，断言零缺字）。
+- 创建/修改的文件：
+  - `Assets/Resources/Fonts/SourceHanSansHWSC-{Regular,Bold} SDF.asset`（仅 4 处数值，diff 共 10 行）
+  - `Assets/Scripts/Runtime/TmpKit.cs`、`Assets/Scripts/Runtime/RadialSkillMenu.cs`
+  - `Assets/Tests/EditMode/FontAssetTests.cs`
+  - `findings.md`、`progress.md`
+- 验证：`Unity.exe -batchmode -runTests -testPlatform EditMode` → **75/75 通过**，日志中 `was not found / Unable to add / atlas texture` 警告 0 条。
+- 待办：Play 目视确认不再有该警告；其余不变。
+
 ### 阶段 25：TMP 迁移 + 数值表现强化（合并做）
 - **状态：** 代码层完成；离线验证通过；**待 Unity 全量 EditMode + Play 目视**
 - 执行的操作：

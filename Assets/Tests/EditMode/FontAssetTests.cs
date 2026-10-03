@@ -1,7 +1,9 @@
 using NUnit.Framework;
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using CQ.Runtime;
 
 /// <summary>
 /// TMP 字体接线验证：资产材质自愈 + CJK 字形栅格化 + 世界文字按目标高度定标。
@@ -86,5 +88,57 @@ public class FontAssetTests
 
         Assert.IsNotNull(text.font, "uGUI 文本应挂 TMP 字体资产");
         Assert.Greater(text.textInfo.characterCount, 0, "uGUI 文本应栅格化出字形");
+    }
+
+    /// <summary>
+    /// demo 全部可能显示的文案都必须有字形，否则 TMP 会退化成 □ 并刷
+    /// 「The character with Unicode value \uXXXX was not found ...」警告。
+    /// 两个踩过的坑：(1) 技能按钮不可用标记原用 ✕(U+2715)，思源黑体没有该字形；
+    /// (2) 资产图集原为 1024² 且未开多图集，pointSize 90 / padding 9 下约 80 个 CJK 字形就满，
+    ///     后半段出现的汉字全部变成 □ —— 本用例把配置与文化字全量灌进去，超容即失败。
+    /// </summary>
+    [Test]
+    public void All_Demo_Text_Fits_In_Font_Assets()
+    {
+        var samples = new List<string>
+        {
+            // UI 文案与符号（含符文分隔、箭头、坐标标记）
+            "行动条", "第 1 回合", "出手顺序", "战报", "结束回合", "重开", "下一关 → ", "我方胜利", "我方失败",
+            "重试加载", "配置错误，查看 Console", "无可用关卡", "请点目标", "此技能点友方", "出招失败（能量/目标不符）",
+            "已登记，结束回合结算", "锁定 ", "开战 ", "×", "→", "↑", "↓", "〔〕",
+            // 战斗文本模板
+            "能 3/3  大 0/3", "12/40", "120/120", "攻击", "连击", "蓄力", "攻增", "减益", "全体", "卡", "倒", "亡",
+            "我 剑士〔斩击〕 → 小怪 -12", "卡〔打断〕 → 领主"
+        };
+
+        var chars = ConfigLoader.LoadCharacters();
+        foreach (var c in chars.items)
+        {
+            samples.Add(c.name);
+            if (c.skills == null) continue;
+            foreach (var s in c.skills) samples.Add(s.name);
+        }
+
+        var enemies = ConfigLoader.LoadEnemies();
+        foreach (var e in enemies.items) samples.Add(e.name);
+
+        var cards = ConfigLoader.LoadCards();
+        foreach (var c in cards.items) samples.Add(c.name);
+
+        var levels = ConfigLoader.LoadLevels();
+        foreach (var l in levels.items) samples.Add(l.name);
+
+        string all = string.Join("", samples);
+        Assert.IsNotEmpty(all);
+
+        foreach (var fa in new[] { CQ.Runtime.TmpKit.Regular, CQ.Runtime.TmpKit.Bold })
+        {
+            uint[] missing;
+            bool ok = fa.HasCharacters(all, out missing, true, true);
+            string detail = (missing == null || missing.Length == 0)
+                ? ""
+                : string.Join(",", System.Array.ConvertAll(missing, v => "U+" + v.ToString("X4")));
+            Assert.IsTrue(ok, fa.name + " 缺 " + (missing != null ? missing.Length : 0) + " 个字形：" + detail);
+        }
     }
 }

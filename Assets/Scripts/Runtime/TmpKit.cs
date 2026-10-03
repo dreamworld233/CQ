@@ -1,5 +1,6 @@
 using TMPro;
 using UnityEngine;
+using System.Collections.Generic;
 
 namespace CQ.Runtime
 {
@@ -36,12 +37,18 @@ namespace CQ.Runtime
             return fa;
         }
 
-        /// <summary>缺材质则补一个；顺带保证字形查找表已读。</summary>
+        /// <summary>缺材质则补一个；顺带保证字形查找表已读、多图集开启、兜底字体已挂。</summary>
         public static void EnsureUsable(TMP_FontAsset fa)
         {
             if (fa == null) return;
             if (fa.characterLookupTable == null || fa.characterLookupTable.Count == 0)
                 fa.ReadFontAssetDefinition();
+
+            // 多图集：一张图集放不下时 TMP 自动再开一张。
+            // 1024² 图集在 pointSize 90 / padding 9 下只装约 80 个 CJK 字形（demo 全部文案约 360 个汉字），
+            // 不开启就会在后半段把没字形的字换成 □ 并刷 "was not found in the font asset" 警告。
+            fa.isMultiAtlasTexturesEnabled = true;
+            EnsureFallback(fa);
             if (fa.material != null) return;
 
             var shader = Shader.Find(ShaderName);
@@ -61,6 +68,20 @@ namespace CQ.Runtime
             mat.SetFloat("_CullMode", 0);
             fa.material = mat;
             Debug.Log("[CQ.Tmp] 已为 " + fa.name + " 补建运行时材质（资产内 material 为空）");
+        }
+
+        /// <summary>
+        /// 挂 TMP Settings 默认字体作兜底：思源黑体缺的符号（箭头/项目符号等）改从兜底字体取字形，
+        /// 少出现「Unicode value ... was not found」+ □。兜底字体也没有时仍会警告，属预期。
+        /// </summary>
+        private static void EnsureFallback(TMP_FontAsset fa)
+        {
+            var def = TMP_Settings.defaultFontAsset;
+            if (def == null || def == fa) return;
+            if (fa.fallbackFontAssetTable == null)
+                fa.fallbackFontAssetTable = new List<TMP_FontAsset>();
+            if (!fa.fallbackFontAssetTable.Contains(def))
+                fa.fallbackFontAssetTable.Add(def);
         }
 
         /// <summary>

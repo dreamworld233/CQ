@@ -100,6 +100,17 @@
 - **延后项（用户指定，不着急）**：数值表现还不够醒目 —— 血条与伤害数字偏小。强化方向见 `progress.md` 阶段 25（加粗加长血条、飘字放大延时、受击闪白/抖动、左栏逐条伤害日志），并可与 TMP 迁移（SDF 描边/阴影）一起做。
 
 ## TMP 迁移与数值表现（阶段 25）
+### 缺字形警告的真根因：字体图集装不下（用户实测 \u2715 警告 → 阶段 25.1 修）
+- 现象：Play 时刷 `The character with Unicode value \u2715 was not found in the [SourceHanSansHWSC-Bold SDF] font asset or any potential fallbacks. It was replaced by Unicode character \u25A1 in text object [Text].`
+- 两个独立原因，都不是「字体没导入」：
+  1. **符号确实不存在**：✕(U+2715, Dingbats) 不在思源黑体 cmap 里（解析 `.otf`：U+2715 → glyph 0）。技能按钮的「不可用」标记改用 ×(U+00D7)，该字符在字体里有。
+  2. **图集容量不足（更隐蔽）**：资产图集 1024² 且 `m_IsMultiAtlasTexturesEnabled: 0`。pointSize 90 + padding 9 → 每个字形约 108×108 px，一张图集最多约 80 个 CJK 字形。而 demo 全部可显示文案（配置的角色名/技能名/敌人名/卡名/关卡名 + UI 文案 + 日志模板）统计下来有 **364 个不同汉字**（另有 5 个符号 U+00B1/U+00D7/U+2191/U+2192/U+2193）。图集用满后，之后出现的新汉字全部退化成 □ 并刷同一条警告；`TryAddCharacterInternal` 还会把它写进 `m_MissingUnicodesFromFontFile`，同进程内不再重试。
+- 定位证据（一次临时 EditMode 诊断）：图集初始 `chars=115 / glyphs=103 / usedRects=used102/free77`；新增 关(U+5173)、并(U+5E76) 返回 false，而 卡/剑/士/第/回/合 返回 true（仅因它们已缓存）→ 无空位放新字形；同一份 `.otf` 的 cmap 里 U+5173 → glyph 10921（非 0）→ 字体有字形，**是容量问题**。
+  - 教训：`HasCharacter(x, ..., tryAddCharacter: true)` 返回 false 有两种含义 —— 字体没有这个字，或图集放不下；别只看返回值，要看图集用量。
+- 修法：两份 SDF 资产的 `m_AtlasWidth/Height` 1024→2048、自由字形矩形 1023→2047、`m_IsMultiAtlasTexturesEnabled` 0→1；`TmpKit.EnsureUsable` 运行时再兜一层开启多图集（防止资产被改回）。2048² 约 324 个 CJK 字形，超出时 TMP 自动再开一张图集（每张图集一份材质实例，TMP 内部 `TMP_MaterialManager` 处理，手建材质也兼容）。
+- 回归防线：`FontAssetTests.All_Demo_Text_Fits_In_Font_Assets` 把**配置中全部名称 + UI 文案/日志模板**拼成一整串灌进两份字体资产，断言零缺字 —— 图集不够时它就会失败（正是它先抓出 U+5173），且不再依赖人们记住「别用 ✕」。
+- 临时工具（在 `Logs/` 下，不入库）：`cmap_gid.py` 解析 `.otf` 的 cmap 报告码点→字形 id（0 = 缺失）；`char_budget.py` 统计工程内可显示字符总数并估算图集容量。
+
 ### 字体资产 material 为空 → 文字必不显示（本次真问题）
 - 现象（静态审查即发现）：`Assets/Resources/Fonts/SourceHanSansHWSC-{Regular,Bold} SDF.asset` 两份资产的 `material: {fileID: 0}`（空），同目录也没有 `... Atlas Material.mat`。
 - 后果：TMP 3.0.7 的 `TextMeshPro.LoadFontAsset()` 在 `m_sharedMaterial == null` 分支里，若 `m_fontAsset.material == null` 只打 `The Font Atlas Texture ... is missing.` 警告，接着仍执行 `m_sharedMaterial.SetFloat(...)` → 空引用、文字不可见。**这是「字体导入成功但一个字都不显示」的典型陷阱。**
