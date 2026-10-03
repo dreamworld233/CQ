@@ -300,14 +300,41 @@
 - 验证结果：用户确认「流程能跑通」（选目标不再被顶掉、数值可见、领主关能过）。
 - 用户新反馈（延后，不着急）：**血条与伤害数值还不够醒目**，要更明显的数值表现（更大字号/更长的血条/伤害数字更突出/掉血闪白等）。
 
-### 阶段 25（延后待办）：数值表现强化
-- 状态：**未开始**（用户明确说暂不着急，延后）
-- 目标：让血条与伤害/治疗数值一眼可读。
-- 候选做法（新窗口从这里起步）：
-  - 血条加粗加长（`UnitView.BarW` / `HpY` 等常量）、加描边底与分段刻度。
-  - 飘字放大（`FloatingText` 的 `fontSize 56` / `characterSize 0.07`）、加粗体 TMP、停留更久、受击方闪白/抖动。
-  - 结算时在左栏行动条按顺序补「谁对谁造成 N」的逐条日志（目前只在 `EndRoundAction` 出一行总览）。
-  - 若迁完 TMP：用 SDF 字体做描边/阴影，数值更清楚。
+### 阶段 25：TMP 迁移 + 数值表现强化（合并做）
+- **状态：** 代码层完成；离线验证通过；**待 Unity 全量 EditMode + Play 目视**
+- 执行的操作：
+  - **TMP 迁移**（原第二件）：
+    - 新增 `Runtime/TmpKit.cs`：字体资产装载 + **材质自愈**。工程内两份 SDF 资产（思源黑体 HW SC Regular/Bold）由 Font Asset Creator 生成，但 `material: {fileID: 0}`（空）→ TMP 3.0.7 在 `TextMeshPro.LoadFontAsset()` 里只打警告，随后对 null 材质赋值会抛异常、文字不显示。故按需补建 `TextMeshPro/Mobile/Distance Field` 材质（MainTex = 资产图集纹理，Dynamic 模式运行时逐字栅格化；`Texture2D.Resize` 原地改同一对象，材质引用不失效）。
+    - `TmpKit.MakeWorldText`：世界空间文字统一入口（RectTransform + `TextMeshPro` 3D + 描边 + sortingOrder）+ `FitWorldHeight`（量测后按**目标世界高度**定标，每次从缩放 1 重置，改文字重调不漂移）。
+    - `UiKit` 字体改 `TMP_FontAsset`（`Font` / `FontBold`）；`MakeText` 产出 `TextMeshProUGUI`（`TextAnchor`→`TextAlignmentOptions` 映射）。
+    - `BattleUi` 文本字段全改 `TextMeshProUGUI`；`UnitView`/`FloatingText` 的 `TextMesh` 改 `TextMeshPro`（3D）。
+    - asmdef：`CQ.Runtime` / `CQ.Tests.EditMode` 的 references 加 `Unity.TextMeshPro`。
+    - 删 `Assets/Resources/Fonts/SimHei.ttf`（+meta，9.3MB，版权与体积都不合适）。
+  - **数值表现强化**（原第一件）：
+    - 血条加粗加长：`BarW 1.5→1.9`、底框高 `0.42`/填充 `0.30`（原 0.2/0.16），加外描边 + 25/50/75% 刻度；≤30% 血条转红并呼吸脉冲。
+    - 血条上直接写 `HP/MAX`（粗体 + 黑描边），名字下移到条下，我方另起一行「能 x/3 大 y/3」。
+    - 飘字（`FloatingText`）：TMP 粗体 + 描边，字号按伤害量放大（0.46~0.92 世界高），弹入缩放 0.6→1.18→1.0，时长 1.1→1.4s。
+    - 受击反馈：`UnitView.Flash(delta)` → 掉血闪白 + 横向抖动 0.22s，回血闪绿。
+    - 左栏新增「战报」：逐条「谁 用什么 → 打谁 -N」，点掉血最直白的证据。
+  - **Core 新增结算事件日志**（战报数据源，`Core` 保持无文案）：
+    - `Core/Battle/BattleEvent.cs`：`Kind`(Skill/Card/Intent) + `ActorId` + `ActionId` + `TargetId` + `HpDelta` + `TargetDead`。
+    - `BattleEngine`：`RoundEvents`；`ActUnit` 结算前后血量快照差 → 每个变化单位一条（AOE = N 条），无变化记 1 条 `HpDelta=0`（增益/减益）。事件描述在结算**前**取（敌人意图游标结算后前进）。每回合 `EndRound` 开头清空，表现层用游标 `DrainEngineEvents` 播报，不重复。
+- 创建/修改的文件：
+  - `Assets/Scripts/Runtime/TmpKit.cs`（新）
+  - `Assets/Scripts/Core/Battle/BattleEvent.cs`（新）
+  - `Assets/Scripts/Core/Battle/BattleEngine.cs`
+  - `Assets/Scripts/Runtime/{UiKit,BattleUi,UnitView,FloatingText,BattleController}.cs`
+  - `Assets/Scripts/Runtime/CQ.Runtime.asmdef`、`Assets/Tests/EditMode/CQ.Tests.EditMode.asmdef`
+  - `Assets/Tests/EditMode/BattleEventTests.cs`（新，4 测试）、`FontAssetTests.cs`（新，4 测试）
+  - 删除 `Assets/Resources/Fonts/SimHei.ttf`（+meta）
+  - `progress.md`、`findings.md`
+- 离线验证（不依赖 Unity 的快速回路，Temp/CoreCheck 下自建，非交付物）：
+  - `dotnet build CQ.Runtime.csproj` 0 error 0 warning（用 Unity 生成的 csproj + 手补 TMP 引用与新文件条目）。
+  - 纯 Core 的 49 个 EditMode 测试全过（含新增 `BattleEventTests` 4 条）。说明：Unity 自带 `nunit.framework.dll` 是 net35、Assert 依赖 `CallContext`，在 .NET Core 下 `TypeLoadException`，故临时写了最小断言替身（见 `findings.md`）。
+- **Unity 权威验证：全量 EditMode 74/74 通过**（`Unity.exe -batchmode -runTests -testPlatform EditMode`，从「与提交一致的工作区」起跑）：
+  - `BalanceTests 6/6`、`BattleEngineTests 8/8`、`BattleEventTests 4/4`、`CardEffectResolverTests 6/6`、`ConfigLoaderTests 3/3`、`DamageTests 3/3`、`DeterminismTests 1/1`、`EnemyActionResolverTests 7/7`、`FontAssetTests 4/4`、`IntentFlowTests 3/3`、`IntentModelTests 1/1`、`SkillResolverTests 12/12`、`SpeedSorterTests 4/4`、`StatusResolverTests 5/5`、`TargetSelectorTests 3/3`、`TurnManagerTests 4/4`。
+  - 期间修 1 个测试自身错误：`textBounds` 是**文字局部空间**（不受 transform 缩放影响），断言世界高度必须读渲染器 `bounds`。
+- 待办：Play 目视（血条/条上数值/飘字/闪白/抖动/战报/中文字体/三关流程）。
 
 ## 测试结果
 | 测试 | 输入 | 预期结果 | 实际结果 | 状态 |
@@ -322,19 +349,19 @@
 ## 五问重启检查
 | 问题 | 答案 |
 |------|------|
-| 我在哪里？ | 阶段 24 已被用户验收「流程能跑通」。当前可用：点选→头顶弧 3 圆钮→索敌→结束回合；血条/能量条/大招条/飘字已接；3 关可打 |
-| 我要去哪里？ | 阶段 25（延后）：数值表现强化（血条更醒目、伤害数字更突出）；再迁 TMP；再打包真机 → 录屏 → 验收 |
+| 我在哪里？ | 阶段 25 代码完成：TMP 全迁（含字体材质自愈）+ 数值表现强化（血条/条上数值/飘字/闪白抖动/战报）；Unity 全量 EditMode 74/74 通过。Play 目视待用户 |
+| 我要去哪里？ | Play 目视 → 打包真机复验（横屏/触控/返回键）→ 剩余素材接线（意图图标已接、选中框/技能图标/面板底后补）→ T13 录屏 → T14 验收 |
 | 目标是什么？ | Android 横屏可玩可讲的 2.5D 回合制垂直切片 |
-| 我学到了什么？ | 真根因往往是「一行参数写错」（`Rect` 锚点对调 → 隐形全屏遮罩），比自己以为的架构问题更常见；点同一物体有两种语义时必须先判状态；数值反馈是回合制可玩性硬需求 |
-| 我做了什么？ | 阶段 17 Android 适配 + 18 诊断 + 19 修真机蓝屏 + 20 uGUI 重做 + 21 素材盘点 + 22 表现层接线 + 23 定位真根因 + **24 指向/数值/难度（已验收）** |
+| 我学到了什么？ | 资产「看起来导入了」不等于可用（SDF 资产 material 为空 → 文字必不显示）；TMP 的 `textBounds` 是局部空间，世界尺寸要读渲染器 bounds；Dynamic 字体资产会把字形缓存写回资产且像素未必真写入，别提交；引擎级事件日志放 Core 但**只给机器 id**，文案留表现层 |
+| 我做了什么？ | 阶段 17 Android 适配 + 18 诊断 + 19 修真机蓝屏 + 20 uGUI 重做 + 21 素材盘点 + 22 表现层接线 + 23 定位真根因 + 24 指向/数值/难度（已验收）+ **25 TMP 迁移 + 数值表现强化** |
 
 ## 下次继续（从这开始）
-- **新窗口恢复**：读 `progress.md` 的阶段 25 + 最近阶段 24 + `findings.md`「指向与数值反馈」节；再看 `Assets/Scripts/Runtime/` 下 `BattleController.cs` / `UnitView.cs` / `RadialSkillMenu.cs` / `BattleUi.cs` / `UiKit.cs` / `ArtLibrary.cs` / `FloatingText.cs`。
-- **当前可用状态**：Play 直接跑（无需搭场景，`BattleController` 有 `[RuntimeInitializeOnLoadMethod]` 自举）。点我方角色 → 头顶弧 3 圆钮 → 点敌/友方索敌 → 结束回合。3 关可打。
-- **第一件（阶段 25，用户指定延后但不着急）**：数值表现强化 —— 血条更粗更长、飘字更大更久、受击反馈（闪白/抖动）、左栏逐条伤害日志。相关常量在 `UnitView`（`BarW` / `HpY` / `EnergyY` / `UltY` / `LabelY` / `FloatY`）与 `FloatingText`（`fontSize` / `characterSize` / `Life`）。
-- **第二件（迁 TMP）**：`UiKit.Font` 改加载 `TMP_FontAsset`（`Resources/Fonts/SourceHanSansHWSC-Regular SDF`）；`UiKit.MakeText` 改产出 `TextMeshProUGUI`；`BattleUi`/`RadialSkillMenu` 文本 `Text`→`TextMeshProUGUI`；`UnitView` 的 `TextMesh` + `FloatingText` 改 `TextMeshPro`（3D）；`CQ.Runtime.asmdef` 的 `references` 加 `Unity.TextMeshPro`。之后可删 SimHei。
-- **第三件**：`按钮选中框.png` 作按钮/面板底框（9-slice）；技能图标 9 个后补；lord 示意图后补；确认无误后关掉 `verboseClick` / `verbose` 诊断日志。
-- **第四件（后置）**：卡牌交互接回（uGUI 底部手牌面板）；接回后蓄力可被打断，领主关可再调硬（现 `lord.json` 蓄力 50 是为「无打断卡」而降的）。
+- **新窗口恢复**：读 `progress.md` 阶段 25 + `findings.md`「TMP 迁移与数值表现（阶段 25）」节；再看 `Assets/Scripts/Runtime/` 下 `TmpKit.cs`（字体装载/定标）/ `UiKit.cs` / `BattleUi.cs` / `UnitView.cs` / `FloatingText.cs` / `BattleController.cs`。
+- **当前可用状态**：Play 直接跑（无需搭场景，`BattleController` 有 `[RuntimeInitializeOnLoadMethod]` 自举）。点我方角色 → 头顶弧 3 圆钮 → 点敌/友方索敌 → 结束回合。3 关可打。全量 EditMode 74/74 绿。
+- **第一件**：Play 目视复核 —— 血条（加粗/刻度/条上 `HP/MAX`/残血脉冲）、飘字（更大更久/按伤害放大）、受击闪白 + 抖动、左栏「战报」逐条伤害、中文字体（思源黑体 SDF）。常量都在 `UnitView`（顶部布局常量）与 `FloatingText`（`Life`/`Pop*`/`MinH`/`MaxH`）。
+- **第二件**：`按钮选中框.png` 作按钮/面板底框（9-slice）；技能图标 9 个后补；lord 示意图后补；确认无误后关掉 `verboseClick`（`BattleController`）/ `verbose`（`RadialSkillMenu`）诊断日志。
+- **第三件（后置）**：卡牌交互接回（uGUI 底部手牌面板）；`BattleEngine.RoundEvents` 已带 `Kind=Card` 分支与 `IntentLabel`，接回即用。接回后蓄力可被打断，领主关可再调硬（现 `lord.json` 蓄力 50 是为「无打断卡」而降的）。
+- **第四件**：若要在编辑器/CI 跑测试 —— `Unity.exe -batchmode -runTests -testPlatform EditMode -testResults <不在 Temp 下> -logFile <不在 Temp 下>`（**不要加 `-quit`**）；跑完记得 `git checkout -- "Assets/Resources/Fonts/*SDF.asset"` 还原字形缓存。
 - 之后：打包真机复验（横屏 + 触控 + 返回键）→ T13 录屏 → T14 验收。
 - 提交：本地 `git commit` 由我执行；远端 push 用户本地完成。
 
@@ -357,6 +384,7 @@
 | 6de92b5 | 记录用户实测 2 bug + 修法 |
 | 8271ccc | 意图三分类 + 治愈选友方 + 目标预锁 + 减益意图 + 修 2 bug |
 | cdd014b | uGUI 交互重做 + 表现层接线 + 点选真根因修复（阶段 19–24）+ 字体/示意图/TMP 资源 |
+| (阶段 25) | TMP 全迁（材质自愈）+ 数值表现强化 + Core 结算事件日志 + 74/74 EditMode 全绿 |
 
 ---
 

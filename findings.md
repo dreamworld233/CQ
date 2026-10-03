@@ -99,6 +99,48 @@
   - `BalanceTests` 不受影响（只断言 level1 纯普攻可胜、各关 200 回合内终止、领主蓄力可打断）。
 - **延后项（用户指定，不着急）**：数值表现还不够醒目 —— 血条与伤害数字偏小。强化方向见 `progress.md` 阶段 25（加粗加长血条、飘字放大延时、受击闪白/抖动、左栏逐条伤害日志），并可与 TMP 迁移（SDF 描边/阴影）一起做。
 
+## TMP 迁移与数值表现（阶段 25）
+### 字体资产 material 为空 → 文字必不显示（本次真问题）
+- 现象（静态审查即发现）：`Assets/Resources/Fonts/SourceHanSansHWSC-{Regular,Bold} SDF.asset` 两份资产的 `material: {fileID: 0}`（空），同目录也没有 `... Atlas Material.mat`。
+- 后果：TMP 3.0.7 的 `TextMeshPro.LoadFontAsset()` 在 `m_sharedMaterial == null` 分支里，若 `m_fontAsset.material == null` 只打 `The Font Atlas Texture ... is missing.` 警告，接着仍执行 `m_sharedMaterial.SetFloat(...)` → 空引用、文字不可见。**这是「字体导入成功但一个字都不显示」的典型陷阱。**
+- 修法（`Runtime/TmpKit.cs`）：装载时自愈 —— `material == null` 则补建 `TextMeshPro/Mobile/Distance Field` 材质，`_MainTex` 指向资产图集纹理（`atlasTexture`）、`_TextureWidth/Height`、`_GradientScale = atlasPadding + 1`。图集是 Dynamic 模式（`m_AtlasPopulationMode: 1`），运行时逐字栅格化，`Texture2D.Resize` 是原地改同一个对象，材质引用不会失效。
+- 回归防线：`FontAssetTests`（4 条）覆盖「资产加载后 material 非空」「CJK 字形栅格化出 characterCount > 0」「uGUI 文本挂上 TMP 字体」。
+
+### 世界空间 TMP 的定标方式
+- 不手调 `fontSize`/`characterSize`（两者耦合、随字体资产 pointSize 变），改为 `MakeWorldText(..., targetHeight)` + `FitWorldHeight`：`ForceMeshUpdate()` 量测 `textBounds.size.y`，把 `localScale` 设为 `targetHeight / 量测高度`。
+- 关键细节：**每次定标前把 localScale 重置为 1**，否则反复调用会连乘漂移；文字内容变化（血条 `9/9` → `120/120`）后要重新定标。
+- 建文字时必须先给一段初值（空字符串量测高度 0 → 定标被跳过 → 文字保持默认巨大字号）。这是本次实现里最容易踩的坑。
+
+### 数值表现（回应「血条与伤害数字不够醒目」）
+- 血条：宽 1.5→1.9、底框高 0.42 / 填充 0.30，外描边 + 25/50/75% 刻度；≤30% 转红并脉冲（`Mathf.Abs(Sin)`）。
+- 血条上直接写 `HP/MAX`（TMP 粗体 + 黑描边），名字移到条下、我方再补「能/大」一行 —— 只给比例看不出趋势，只给数字看不出剩余比例，两者都要。
+- 飘字：字号随伤害量走（`MinH 0.46` ~ `MaxH 0.92` 世界高），弹入 0.6→1.18→1.0，时长 1.4s；受击闪白 + 横向抖动（`UnitView.Flash`），回血闪绿。
+- 战报逐条日志：见下（Core 事件日志）。
+
+### 结算事件日志（Core 新增，战报数据源）
+- `Core/Battle/BattleEvent.cs`：`Kind`(Skill/Card/Intent) + `ActorId` + `ActionId`（技能 id / 卡 id / 意图 type）+ `TargetId` + `HpDelta` + `TargetDead`。
+- **Core 只给机器 id，不给中文文案**：文案映射留在表现层（`BattleController.ActionLabel` / `IntentLabel`），保持 Core 语言无关、可测。
+- 生成方式：`ActUnit` 里结算**前后血量快照差**，每个有变化的单位一条（AOE 一次动作 = N 条），无变化记 1 条 `HpDelta = 0`（增益/减益也可见）。
+- 两个顺序陷阱：
+  1. 动作描述必须在结算**前**取 —— 敌人意图游标在结算后前进，玩家的 `_plan` 结算后不再代表本次动作。
+  2. 事件列表在 `EndRound` 开头清空（不是 `BeginRound`）：`EndRound` 末尾会调 `BeginRound`，若在那里清空，刚结算出来的事件会被自己抹掉。
+- 表现层用游标（`_logCursor`）增量播报，引擎清空时游标归零，不重复、不丢。
+- 回归测试 `BattleEventTests`（4 条）：逐单位事件血量合计 = 实际血量变化（防漏记/重记）、AOE = 3 条且目标互不相同、敌方事件带意图 type 与锁定目标、跨回合不堆积。
+
+### 离线快速验证回路（本会话新增，非交付物）
+- Unity 编辑器开着时工程被锁，无法 batchmode；等 Unity 跑一轮太慢。故在 `Temp/CoreCheck/`（gitignore 内）建了一个只跑纯 Core 测试的临时工程：
+  - `dotnet build CQ.Runtime.csproj` 能编过刚改的 Runtime 代码（Unity 生成的 csproj + 手补 `Unity.TextMeshPro` 引用与新文件条目；csproj 本身被 gitignore，Unity 会重新生成覆盖）。
+  - 纯 Core 的 49 个测试离线跑通。
+- 坑：Unity 自带 `nunit.framework.dll`（net35）的 `Assert` 依赖 `System.Runtime.Remoting.Messaging.CallContext`，在 .NET Core 下 `TypeLoadException`，不能直接引；改用最小断言替身（只实现 `AreEqual/IsTrue/IsFalse/IsNotNull/IsNotEmpty/Greater`）。
+- 坑：`Unity.exe -batchmode` 启动时会**删掉工程 Temp 目录**（正常清理），所以 `-logFile` / `-testResults` 不要写进 `Temp/`，否则日志随启动一起没。
+- 坑：`-runTests` 不能和 `-quit` 同用 —— 带 `-quit` 时 Unity 导入完就退出（日志 `Batchmode quit successfully invoked`），一条测试都不跑、也不产出结果 XML。去掉 `-quit`，测试跑完自己退出。
+- 坑：受限沙箱下 Unity batchmode 报 `Connection to channel LicenseClient-... refused` → `Timed-out after 60.00s` → 返回码 199（许可证客户端走本地 IPC 命名管道，被沙箱挡）。放宽沙箱后正常。
+
+### TMP Dynamic 资产会把字形缓存写回资产文件（勿提交）
+- 编辑器里跑一次用到中文的测试/Play 后，两份 SDF 资产从 ~4.7KB 涨到 ~2.1MB（图集纹理序列化成 1024×1024 的十六进制数据 + `m_GlyphTable`/`m_CharacterTable`）。
+- 危险点：`image data: 0` —— 像素并没有真正写进资产（只有全零占位数据），但字形表/图集矩形已经记下来了。这种状态一旦提交，运行时会认为字形已在图集里而**跳过重新栅格化** → 中文可能整片不显示。
+- 处置：每次测试后 `git checkout -- "Assets/Resources/Fonts/*SDF.asset"` 还原成空图集的 pristine 状态；Dynamic 模式本来就会在运行时逐字栅格化（已验证：从 pristine 资产起跑，`FontAssetTests` 的材料自愈 + 中文栅格化全过）。
+
 ## uGUI 交互重做（阶段 20）
 - 动机：原全 IMGUI（OnGUI）热区小、难做轮盘、高 DPI 不缩放，真机点选不便、不可录屏。用户定调：点角色选中 → 角色周围弧形技能 → 点目标索敌。
 - 决策（用户确认）：迁 uGUI 全部重做；本期只做技能轮盘（卡牌交互后置）；技能摆角色周围弧形。
@@ -106,7 +148,7 @@
 - 输入：世界单位加 `BoxCollider2D`，`Physics2D.OverlapPoint` 点选；`EventSystem.IsPointerOverGameObject` 挡 UI 点击误触单位。
 - 状态机：点我方角色（黄环）→ 弧形 3 技能按钮（不可用置灰）→ 单体伤害点敌 / 单体治疗点友方 / 自愈或全体立即出招。
 - 手牌：`DrawHand` 已随 OnGUI 移除，卡牌交互后置；`BattleEngine.PlayCard` 保留但本期 UI 不接。
-- 字体：uGUI `Text` 中文字符需 CJK 字体，内置 `Assets/Resources/Fonts/SimHei.ttf`（9.3MB，SimHei 属 Windows 附带字体，**仅临时演示用**；正式发布换开源 `Noto Sans SC`，避免版权与体积）。`UiKit.Font` 内置字体优先、OS 动态回退链兜底。
+- 字体：uGUI 中文曾用 `Assets/Resources/Fonts/SimHei.ttf`（9.3MB，SimHei 属 Windows 附带字体，仅临时演示用）。**阶段 25 已删除**，改思源黑体 HW SC SDF（OFL 可商用；源 `.otf` 被 SDF 资产引用，仍在构建内）。
 
 ## 战斗表现修订（用户确认）
 - 敌人意图三分类显示：攻击=(显示谁+伤害)、自增益=`↑`、给我方减益=`↓`。
@@ -170,7 +212,7 @@
 - 修法：`DrawPlayers` 点我方只设 `_selectedActor`，删掉 `_selectedTarget = p.Id;`（目标独立保留上一个，不设自己）。
 
 ## 素材盘点（阶段 21，明早接线）
-- 字体：`Assets/Resources/Fonts/SourceHanSansHWSC-Regular SDF.asset` + `Bold SDF.asset`（TMP Font Asset，Font Asset Creator 生成）。思源黑体 HW SC，OFL 许可可商用。UI 文本迁 `TextMeshProUGUI`，`UiKit.Font` 从 legacy `Font`/SimHei 改为加载 `TMP_FontAsset`。
+- 字体：`Assets/Resources/Fonts/SourceHanSansHWSC-Regular SDF.asset` + `Bold SDF.asset`（TMP Font Asset，Font Asset Creator 生成）。思源黑体 HW SC，OFL 许可可商用。**阶段 25 已完成迁移**：`UiKit.Font/FontBold` 加载 `TMP_FontAsset`，UI 文本为 `TextMeshProUGUI`，世界文字为 `TextMeshPro`（3D），legacy `Text`/`TextMesh`/SimHei 全部移除。资产缺 material 的问题见上文「字体资产 material 为空」。
 - 示意图 5 张（`Assets/Resources/Arts/UI/`）：战士/法师/盾兵/小怪/精英怪 ↔ sword/mage/guard/grunt/claw。缺 lord（领主/Boss），暂复用精英怪或后补。
 - 意图图标 4：攻击/防御/增益/减益；选中框 `按钮选中框.png`（可复用为选中高亮环）。
 - 缺（后置）：技能图标 9 个（轮盘按钮文字占位）、面板/按钮 9-slice 描边底。

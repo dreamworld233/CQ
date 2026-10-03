@@ -29,7 +29,8 @@ namespace CQ.Runtime
         private string _selectedActor;
         private string _selectedTarget;
         private SkillSpec _pendingSkill;   // 待选目标的技能
-        private string _lastEvent = "";
+        private readonly List<string> _log = new List<string>();   // 左栏战报（逐条伤害/治疗）
+        private int _logCursor;                                    // 已播报的引擎事件下标
         private Transform _worldRoot;
         private Camera _cam;
         private BattleUi _ui;
@@ -248,7 +249,8 @@ namespace CQ.Runtime
 
         private void NewBattle()
         {
-            _lastEvent = "";
+            _log.Clear();
+            _logCursor = 0;
             _pendingSkill = null;
             _queued.Clear();
             if (_radial != null) _radial.Hide();
@@ -380,7 +382,7 @@ namespace CQ.Runtime
             }
             bool hasNext = HasNextLevel();
             _ui.Refresh(_engine != null ? _engine.Round : 1, order, winner, hasNext ? "下一关 → " + _levels[_levelIndex + 1].name : "", hasNext);
-            _ui.SetEvent(_lastEvent);
+            _ui.SetEvent(LogText());
         }
 
         // ---------- 指令 ----------
@@ -388,17 +390,64 @@ namespace CQ.Runtime
         private void EndRoundAction()
         {
             if (_engine == null || _engine.IsFinished) return;
-            Debug.Log("[CQ.Round] 结束回合被触发（Console 点开该条看堆栈，确认是按钮还是误触）");
             var before = SnapshotHp();
-            var order = _engine.EndRound();
-            Log("出手：" + string.Join(" → ", order.Select(u => u.Name + (u.IsDead ? "(亡)" : ""))));
+            _engine.EndRound();
             _pendingSkill = null;
             _queued.Clear();
             if (_radial != null) _radial.Hide();
             RefreshWorld();
             RefreshSelection();
-            RefreshHud();
+            DrainEngineEvents();   // 逐条播报：谁 用什么 → 打谁 掉多少
             FloatDeltas(before);
+            RefreshHud();
+        }
+
+        /// <summary>把引擎新产生的结算事件排进左栏战报（已播报过的按游标跳过）。</summary>
+        private void DrainEngineEvents()
+        {
+            if (_engine == null) return;
+            var events = _engine.RoundEvents;
+            if (_logCursor > events.Count) _logCursor = 0;   // 引擎每回合清空，游标跟着回零
+            for (; _logCursor < events.Count; _logCursor++)
+                PushLog(FormatEvent(events[_logCursor]));
+        }
+
+        private string FormatEvent(BattleEvent ev)
+        {
+            string action = ActionLabel(ev);
+            if (ev.Kind == BattleEventKind.Card)
+                return "卡" + action + " → " + UnitName(ev.TargetId);
+            string actor = UnitName(ev.ActorId);
+            if (ev.HpDelta == 0) return actor + " " + action;
+            return actor + " " + action + " → " + UnitName(ev.TargetId)
+                + " " + (ev.HpDelta > 0 ? "+" : "") + ev.HpDelta + (ev.TargetDead ? "（倒）" : "");
+        }
+
+        private string ActionLabel(BattleEvent ev)
+        {
+            switch (ev.Kind)
+            {
+                case BattleEventKind.Skill:
+                    return "〔" + SkillName(ev.ActorId, ev.ActionId) + "〕";
+                case BattleEventKind.Card:
+                    var card = _engine.GetCard(ev.ActionId);
+                    return "〔" + (card != null ? card.name : ev.ActionId) + "〕";
+                default:
+                    return "〔" + IntentLabel(ev.ActionId) + "〕";
+            }
+        }
+
+        private static string IntentLabel(string type)
+        {
+            switch (type)
+            {
+                case "attack": return "攻击";
+                case "multi": return "连击";
+                case "charge": return "蓄力";
+                case "attackUp": return "攻增";
+                case "debuff": return "减益";
+                default: return type;
+            }
         }
 
         /// <summary>结算前后血量快照差 → 飘字。数值反馈（用户要求能看出掉血/回血）。</summary>
@@ -420,7 +469,8 @@ namespace CQ.Runtime
                 if (delta == 0) continue;
                 if (!_views.TryGetValue(u.Id, out var v)) continue;
                 v.FloatText((delta > 0 ? "+" : "") + delta,
-                    delta > 0 ? new Color(0.4f, 1f, 0.5f) : new Color(1f, 0.45f, 0.45f));
+                    delta > 0 ? new Color(0.4f, 1f, 0.5f) : new Color(1f, 0.45f, 0.45f), delta);
+                v.Flash(delta);   // 掉血闪白 + 抖动，回血闪绿
             }
         }
 
@@ -467,10 +517,20 @@ namespace CQ.Runtime
 
         private void Log(string msg)
         {
-            _lastEvent = msg;
             Debug.Log("[CQ.Battle] " + msg);
+            PushLog(msg);
+        }
+
+        private const int LogMax = 7;   // 左栏战报最多保留行数（更多会顶掉最旧一条；行长会折行，故不宜多）
+
+        private void PushLog(string msg)
+        {
+            _log.Add(msg);
+            while (_log.Count > LogMax) _log.RemoveAt(0);
             RefreshHud();
         }
+
+        private string LogText() => string.Join("\n", _log);
 
         private void DumpErrors(string label, List<string> errors)
         {

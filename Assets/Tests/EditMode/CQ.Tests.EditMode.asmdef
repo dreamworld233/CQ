@@ -4,6 +4,7 @@
     "references": [
         "CQ.Core",
         "CQ.Runtime",
+        "Unity.TextMeshPro",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],

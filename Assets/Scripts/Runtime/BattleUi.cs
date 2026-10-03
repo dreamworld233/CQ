@@ -1,4 +1,5 @@
 using System;
+using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -6,24 +7,25 @@ using UnityEngine.UI;
 namespace CQ.Runtime
 {
     /// <summary>
-    /// uGUI HUD：画布 + 缩放 + 事件系统 + 左侧行动条 + 底部大按钮 + 配置错误面板。
+    /// uGUI HUD：画布 + 缩放 + 事件系统 + 左侧行动条/战报 + 底部大按钮 + 配置错误面板。
     /// 全部代码构建，零场景资产。BattleController 挂回调并驱动刷新。
+    /// 文本统一 TMP（思源黑体 HW SC SDF），数值/标题用粗体。
     /// </summary>
     public sealed class BattleUi : MonoBehaviour
     {
         public RectTransform CanvasRect { get; private set; }
 
-        public Text RoundText;
-        public Text OrderText;
-        public Text EventText;
-        public Text WinnerText;
+        public TextMeshProUGUI RoundText;
+        public TextMeshProUGUI OrderText;
+        public TextMeshProUGUI EventText;
+        public TextMeshProUGUI WinnerText;
         public Button EndRoundButton;
         public Button RestartButton;
         public Button NextLevelButton;
-        public Text NextLevelLabel;
+        public TextMeshProUGUI NextLevelLabel;
         public GameObject LeftPanel;
         public GameObject ErrorPanel;
-        public Text ErrorText;
+        public TextMeshProUGUI ErrorText;
 
         public Action OnEndRound;
         public Action OnRestart;
@@ -92,23 +94,30 @@ namespace CQ.Runtime
 
             float inner = PanelW - 36f;
 
-            var title = UiKit.MakeText(panelRt, "行动条", 44, new Color(0.55f, 0.80f, 1f), TextAnchor.MiddleLeft);
+            var title = UiKit.MakeText(panelRt, "行动条", 44, new Color(0.55f, 0.80f, 1f), TextAnchor.MiddleLeft, true);
             Rect((RectTransform)title.transform, 0f, 1f, 0f, 1f, new Vector2(18f, -16f), new Vector2(inner, 52f));
 
-            RoundText = UiKit.MakeText(panelRt, "第 1 回合", 40, Color.white, TextAnchor.MiddleLeft);
+            RoundText = UiKit.MakeText(panelRt, "第 1 回合", 40, Color.white, TextAnchor.MiddleLeft, true);
             Rect((RectTransform)RoundText.transform, 0f, 1f, 0f, 1f, new Vector2(18f, -76f), new Vector2(inner, 48f));
 
             var orderTitle = UiKit.MakeText(panelRt, "出手顺序", 32, new Color(0.75f, 0.80f, 0.85f), TextAnchor.UpperLeft);
             Rect((RectTransform)orderTitle.transform, 0f, 1f, 0f, 1f, new Vector2(18f, -140f), new Vector2(inner, 40f));
 
-            OrderText = UiKit.MakeText(panelRt, "", 36, Color.white, TextAnchor.UpperLeft);
-            Rect((RectTransform)OrderText.transform, 0f, 1f, 0f, 1f, new Vector2(22f, -190f), new Vector2(inner - 8f, 560f));
+            OrderText = UiKit.MakeText(panelRt, "", 34, Color.white, TextAnchor.UpperLeft);
+            OrderText.enableWordWrapping = true;
+            Rect((RectTransform)OrderText.transform, 0f, 1f, 0f, 1f, new Vector2(22f, -190f), new Vector2(inner - 8f, 380f));
 
-            EventText = UiKit.MakeText(panelRt, "", 30, new Color(1f, 0.85f, 0.4f), TextAnchor.LowerLeft);
-            Rect((RectTransform)EventText.transform, 0f, 0f, 0f, 0f, new Vector2(18f, 18f), new Vector2(inner, 220f));
+            // 战报：逐条伤害/治疗（最新一条在最下）
+            var logTitle = UiKit.MakeText(panelRt, "战报", 30, new Color(0.75f, 0.80f, 0.85f), TextAnchor.MiddleLeft);
+            Rect((RectTransform)logTitle.transform, 0f, 0f, 0f, 0f, new Vector2(18f, 382f), new Vector2(inner, 34f));
 
-            WinnerText = UiKit.MakeText(panelRt, "", 40, Color.white, TextAnchor.MiddleCenter);
+            EventText = UiKit.MakeText(panelRt, "", 24, new Color(1f, 0.88f, 0.55f), TextAnchor.LowerLeft);
+            EventText.enableWordWrapping = true;
+            Rect((RectTransform)EventText.transform, 0f, 0f, 0f, 0f, new Vector2(18f, 20f), new Vector2(inner, 352f));
+
+            WinnerText = UiKit.MakeText(panelRt, "", 46, Color.white, TextAnchor.MiddleCenter, true);
             Rect((RectTransform)WinnerText.transform, 0.5f, 0.5f, 0.5f, 0.5f, new Vector2(0f, 0f), new Vector2(inner, 60f));
+            TmpKit.SetOutline(WinnerText, new Color(0f, 0f, 0f, 1f), 0.25f);
             WinnerText.gameObject.SetActive(false);
         }
 
@@ -130,7 +139,7 @@ namespace CQ.Runtime
             // 下一关：胜利时显示（屏幕中上）
             NextLevelButton = UiKit.MakeButton(CanvasRect, "", 38, ButtonBg);
             Rect((RectTransform)NextLevelButton.transform, 0.5f, 0.5f, 0.5f, 0.5f, new Vector2(0f, 220f), new Vector2(420f, 100f));
-            NextLevelLabel = NextLevelButton.GetComponentInChildren<Text>();
+            NextLevelLabel = NextLevelButton.GetComponentInChildren<TextMeshProUGUI>();
             NextLevelButton.onClick.AddListener(() => OnNextLevel?.Invoke());
             NextLevelButton.gameObject.SetActive(false);
         }
@@ -186,6 +195,7 @@ namespace CQ.Runtime
             NextLevelButton.gameObject.SetActive(showNextLevel);
         }
 
+        /// <summary>战报文本（已按行拼好的整段）。</summary>
         public void SetEvent(string msg)
         {
             EventText.text = msg;

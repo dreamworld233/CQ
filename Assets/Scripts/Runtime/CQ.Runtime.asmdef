@@ -2,7 +2,8 @@
     "name": "CQ.Runtime",
     "rootNamespace": "CQ.Runtime",
     "references": [
-        "CQ.Core"
+        "CQ.Core",
+        "Unity.TextMeshPro"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

@@ -1,29 +1,20 @@
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace CQ.Runtime
 {
     /// <summary>
-    /// uGUI 构建小工具：统一字体（内置 CJK 回退）+ 快捷建 Text/Button/Rect。
+    /// uGUI 构建小工具：统一 TMP 字体（思源黑体 HW SC SDF）+ 快捷建 Text/Button/Rect。
     /// 全部代码构建，不依赖场景资产。
     /// </summary>
     public static class UiKit
     {
-        private static Font _font;
+        /// <summary>正文字体（TMP SDF，Dynamic 图集，运行时逐字栅格化）。</summary>
+        public static TMP_FontAsset Font => TmpKit.Regular;
 
-        /// <summary>优先 Resources 内置 CJK 字体；缺则 OS 动态字体回退链。</summary>
-        public static Font Font
-        {
-            get
-            {
-                if (_font != null) return _font;
-                _font = Resources.Load<Font>("Fonts/SimHei");
-                if (_font == null)
-                    _font = Font.CreateDynamicFontFromOSFont(
-                        new[] { "Microsoft YaHei", "SimHei", "Arial Unicode MS", "Noto Sans CJK SC", "Droid Sans Fallback" }, 16);
-                return _font;
-            }
-        }
+        /// <summary>粗体字体（数值/标题）。</summary>
+        public static TMP_FontAsset FontBold => TmpKit.Bold;
 
         public static RectTransform AddRect(Transform parent, string name,
             Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot, Vector2 anchoredPos, Vector2 size)
@@ -39,19 +30,38 @@ namespace CQ.Runtime
             return rt;
         }
 
-        public static Text MakeText(Transform parent, string text, int size, Color color, TextAnchor anchor)
+        public static TextMeshProUGUI MakeText(Transform parent, string text, int size, Color color,
+            TextAnchor anchor, bool bold = false)
         {
             var rt = AddRect(parent, "Text", Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
-            var t = rt.gameObject.AddComponent<Text>();
-            t.font = Font;
+            var t = rt.gameObject.AddComponent<TextMeshProUGUI>();
+            t.font = bold ? FontBold : Font;
             t.text = text;
             t.fontSize = size;
             t.color = color;
-            t.alignment = anchor;
-            t.horizontalOverflow = HorizontalWrapMode.Overflow;
-            t.verticalOverflow = VerticalWrapMode.Overflow;
+            t.alignment = ToTmp(anchor);
+            t.fontStyle = bold ? FontStyles.Bold : FontStyles.Normal;
+            t.enableWordWrapping = false;
+            t.overflowMode = TextOverflowModes.Overflow;
             t.raycastTarget = false;
             return t;
+        }
+
+        /// <summary>Legacy TextAnchor → TMP 对齐。锚点只用到这几个。</summary>
+        public static TextAlignmentOptions ToTmp(TextAnchor anchor)
+        {
+            switch (anchor)
+            {
+                case TextAnchor.UpperLeft: return TextAlignmentOptions.TopLeft;
+                case TextAnchor.UpperCenter: return TextAlignmentOptions.Top;
+                case TextAnchor.UpperRight: return TextAlignmentOptions.TopRight;
+                case TextAnchor.MiddleLeft: return TextAlignmentOptions.Left;
+                case TextAnchor.MiddleCenter: return TextAlignmentOptions.Center;
+                case TextAnchor.MiddleRight: return TextAlignmentOptions.Right;
+                case TextAnchor.LowerLeft: return TextAlignmentOptions.BottomLeft;
+                case TextAnchor.LowerCenter: return TextAlignmentOptions.Bottom;
+                default: return TextAlignmentOptions.BottomRight;
+            }
         }
 
         public static Button MakeButton(Transform parent, string label, int size, Color bg)
@@ -62,7 +72,7 @@ namespace CQ.Runtime
             var btn = rt.gameObject.AddComponent<Button>();
             btn.targetGraphic = img;
 
-            var labelT = MakeText(rt, label, size, Color.white, TextAnchor.MiddleCenter);
+            var labelT = MakeText(rt, label, size, Color.white, TextAnchor.MiddleCenter, true);
             var lrt = (RectTransform)labelT.transform;
             lrt.anchorMin = Vector2.zero;
             lrt.anchorMax = Vector2.one;
@@ -85,7 +95,9 @@ namespace CQ.Runtime
             var btn = rt.gameObject.AddComponent<Button>();
             btn.targetGraphic = img;
 
-            MakeText(rt, label, fontSize, Color.white, TextAnchor.MiddleCenter);
+            var labelT = MakeText(rt, label, fontSize, Color.white, TextAnchor.MiddleCenter, true);
+            labelT.enableWordWrapping = true;
+            TmpKit.SetOutline(labelT, new Color(0f, 0f, 0f, 0.85f), 0.18f);
             return btn;
         }
 

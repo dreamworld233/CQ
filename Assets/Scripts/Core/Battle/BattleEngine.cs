@@ -47,6 +47,9 @@ namespace CQ.Core.Battle
         public IReadOnlyList<Unit> TurnOrder => _lastOrder;
         public IReadOnlyList<string> Hand => Deck.Hand;
 
+        /// <summary>最近一次结算产生的动作事件（表现层逐条播报）。每回合开局清空，输入阶段打牌会追加。</summary>
+        public IReadOnlyList<BattleEvent> RoundEvents => _events;
+
         /// <summary>本回合当前出手顺序（按需速度混排，输入阶段即最新；行动条读此）。</summary>
         public IReadOnlyList<Unit> CurrentOrder
         {
@@ -65,6 +68,7 @@ namespace CQ.Core.Battle
         private readonly EnemyActionResolver _enemyResolver = new EnemyActionResolver();
         private readonly TurnManager _turns;
         private readonly Dictionary<string, string> _lockedTargets = new Dictionary<string, string>();
+        private readonly List<BattleEvent> _events = new List<BattleEvent>();
         private IReadOnlyList<Unit> _lastOrder = new List<Unit>();
         private bool _started;
 
@@ -206,7 +210,9 @@ namespace CQ.Core.Battle
             if (!InputOpen || Ctx.GetUnit(targetUnitId) == null) return false;
             string cardId = Deck.Play(handIndex);
             if (cardId == null || !_cards.TryGetValue(cardId, out var cfg)) return false;
+            var before = SnapshotHp();
             CardEffectResolver.Resolve(cfg.effect, Ctx, targetUnitId, CardSourceId);
+            Record(BattleEventKind.Card, null, cardId, before);
             return true;
         }
 
@@ -242,6 +248,7 @@ namespace CQ.Core.Battle
             if (!InputOpen) return _lastOrder;
             Flow = BattleFlow.Resolving;
 
+            _events.Clear();
             _lastOrder = _turns.RunRound(ActUnit);
 
             if (_turns.IsFinished)
@@ -260,8 +267,74 @@ namespace CQ.Core.Battle
         private void ActUnit(Unit unit)
         {
             if (unit == null || unit.IsDead) return;
+
+            // 事件描述须在结算前取：敌人意图游标在结算后前进，玩家的 plan 在结算后不再代表本次动作。
+            BattleEventKind kind;
+            string actionId;
+            if (unit.Team == Team.Player)
+            {
+                kind = BattleEventKind.Skill;
+                actionId = _plan.TryGetValue(unit.Id, out var p) && p != null && p.Skill != null
+                    ? p.Skill.id
+                    : BasicSkillIdOf(unit);
+            }
+            else
+            {
+                kind = BattleEventKind.Intent;
+                actionId = CurrentIntentOf(unit.Id)?.type ?? "unknown";
+            }
+
+            var before = SnapshotHp();
             if (unit.Team == Team.Player) ActPlayer(unit);
             else ActEnemy(unit);
+            Record(kind, unit.Id, actionId, before);
+        }
+
+        private string BasicSkillIdOf(Unit unit)
+        {
+            if (!_chars.TryGetValue(unit.Id, out var cfg) || cfg.skills == null) return "basic";
+            foreach (var s in cfg.skills)
+                if (s.type == "basic") return s.id;
+            return "basic";
+        }
+
+        private Dictionary<string, int> SnapshotHp()
+        {
+            var map = new Dictionary<string, int>(Ctx.Units.Count);
+            foreach (var u in Ctx.Units) map[u.Id] = u.Hp;
+            return map;
+        }
+
+        /// <summary>按结算前后血量差记事件：每个有变化的单位一条；无变化则记一条 HpDelta = 0。</summary>
+        private void Record(BattleEventKind kind, string actorId, string actionId, Dictionary<string, int> before)
+        {
+            bool any = false;
+            foreach (var u in Ctx.Units)
+            {
+                if (!before.TryGetValue(u.Id, out int hp0)) continue;
+                int delta = u.Hp - hp0;
+                if (delta == 0) continue;
+                any = true;
+                _events.Add(new BattleEvent
+                {
+                    Kind = kind,
+                    ActorId = actorId,
+                    ActionId = actionId,
+                    TargetId = u.Id,
+                    HpDelta = delta,
+                    TargetDead = u.IsDead
+                });
+            }
+
+            if (!any)
+                _events.Add(new BattleEvent
+                {
+                    Kind = kind,
+                    ActorId = actorId,
+                    ActionId = actionId,
+                    TargetId = actorId,
+                    HpDelta = 0
+                });
         }
 
         private void ActPlayer(Unit unit)
