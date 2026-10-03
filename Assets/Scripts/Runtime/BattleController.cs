@@ -4,51 +4,255 @@ using CQ.Core.Battle;
 using CQ.Core.Combat;
 using CQ.Core.Config;
 using UnityEngine;
+using UnityEngine.EventSystems;
 
 namespace CQ.Runtime
 {
     /// <summary>
-    /// 场景驱动桥接（T10）：加载配置 → 建 BattleEngine → 生成世界单位（前后排站位）→
-    /// IMGUI HUD（左侧常驻行动条 / 手牌 / 技能 / 意图 / 结束回合）。
+    /// 场景驱动桥接：加载配置 → 建 BattleEngine → 生成世界单位 →
+    /// 点选交互（点角色→弧形技能→点目标）+ uGUI HUD（战力条/结束回合）。
     /// BattleEngine 是唯一战斗状态源；表现层只读、只发指令。
     /// </summary>
     public class BattleController : MonoBehaviour
     {
         [SerializeField] private long seed = 12345;
 
+        [Header("阵型布局（Play 中可实时调，调好抄回 PositioningView 默认值）")]
+        [SerializeField] private BattleLayout layout = new BattleLayout();
+
         private readonly List<LevelConfig> _levels = new List<LevelConfig>();
         private int _levelIndex = 0;
 
         private BattleEngine _engine;
         private readonly Dictionary<string, UnitView> _views = new Dictionary<string, UnitView>();
+        private readonly Dictionary<string, string> _queued = new Dictionary<string, string>();   // 本回合已登记技能
         private string _selectedActor;
         private string _selectedTarget;
+        private SkillSpec _pendingSkill;   // 待选目标的技能
         private string _lastEvent = "";
-        private string _configError;
         private Transform _worldRoot;
+        private Camera _cam;
+        private BattleUi _ui;
+        private RadialSkillMenu _radial;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+        private static void EnsureControllerInScene()
+        {
+            // 真机引导兜底：场景磁盘版若没存 BattleController，运行时自动建，
+            // 不依赖编辑器菜单保存（候选根因 2 修复）。
+            if (Object.FindFirstObjectByType<BattleController>() != null) return;
+            new GameObject("BattleController").AddComponent<BattleController>();
+        }
 
         private void Start()
         {
-            EnsureCamera();
+            Screen.orientation = ScreenOrientation.LandscapeLeft;
+            _cam = EnsureCamera();
+            BuildUi();
             NewBattle();
         }
 
-        private void EnsureCamera()
+        private void Update()
         {
-            if (Camera.main != null) return;
-            var cam = new GameObject("Main Camera").AddComponent<Camera>();
+            // Android 返回键退出（演示 MVP）
+            if (Input.GetKeyDown(KeyCode.Escape))
+                Application.Quit();
+
+            if (_engine == null) return;
+            HandleUnitClick();
+        }
+
+        // ---------- 相机 ----------
+
+        private Camera EnsureCamera()
+        {
+            // 场景里若已有 MainCamera（默认 SampleScene 是透视相机），必须强制成正交并归位：
+            // 透视相机的 ScreenToWorldPoint 落点不在世界 z=0 平面 → 点选必然打空。
+            var cam = Camera.main;
+            if (cam == null)
+            {
+                cam = new GameObject("Main Camera").AddComponent<Camera>();
+                cam.tag = "MainCamera";
+            }
             cam.orthographic = true;
             cam.orthographicSize = 5f;
             cam.transform.position = new Vector3(0f, 0f, -10f);
-            cam.tag = "MainCamera";
+            cam.transform.rotation = Quaternion.identity;
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.backgroundColor = new Color(0.06f, 0.09f, 0.14f);
+            Debug.Log("[CQ.Cam] ortho=" + cam.orthographic + " size=" + cam.orthographicSize + " pos=" + cam.transform.position);
+            return cam;
+        }
+
+        // ---------- UI 构建 ----------
+
+        private void BuildUi()
+        {
+            _ui = BattleUi.Build(transform);
+            _ui.OnEndRound = EndRoundAction;
+            _ui.OnRestart = () => NewBattle();
+            _ui.OnNextLevel = NextLevelAction;
+            _ui.OnRetry = () => NewBattle();
+
+            _radial = RadialSkillMenu.Build(transform);
+            _radial.Bind(_ui.CanvasRect, _cam);
+            _radial.OnPick = OnRadialPicked;
+            _radial.Hide();
+        }
+
+        // ---------- 点选输入 ----------
+
+        private const float TapRadius = 0.9f;   // 触控容错半径（世界单位）
+        [SerializeField] private bool verboseClick = true;
+
+        private void HandleUnitClick()
+        {
+            if (!Input.GetMouseButtonDown(0)) return;
+
+            Vector2 screen = Input.mousePosition;
+            Vector3 world = _cam.ScreenToWorldPoint(screen);
+            var point = new Vector2(world.x, world.y);
+            bool overUi = PointerOverUi();
+
+            // 不用默认 layerMask（默认排除 Ignore Raycast 层，会静默打空）
+            // 必须取「离点击点最近」的单位，不能取查询数组的第一个：多个碰撞体同时命中时
+            // 数组顺序固定，会导致某个角色永远选不中。
+            Collider2D hit = PickUnitCollider(Physics2D.OverlapPointAll(point, Physics2D.AllLayers), point);
+            if (hit == null)
+                hit = PickUnitCollider(Physics2D.OverlapCircleAll(point, TapRadius, Physics2D.AllLayers), point);
+
+            if (verboseClick)
+            {
+                var probe = hit != null ? hit.GetComponent<UnitView>() : null;
+                Debug.Log("[CQ.Click] screen=" + screen + " world=" + point.ToString("F2")
+                    + " overUi=" + overUi + " hit=" + (hit != null ? hit.name : "null")
+                    + " unit=" + (probe != null ? probe.UnitId : "null"));
+            }
+
+            if (overUi) return;
+
+            if (hit == null)
+            {
+                // 点空白：取消待选目标
+                if (_pendingSkill != null) { _pendingSkill = null; RefreshSelection(); }
+                return;
+            }
+
+            var uv = hit.GetComponent<UnitView>();
+            if (uv == null) return;
+            OnUnitTapped(_engine.Ctx.GetUnit(uv.UnitId));
+        }
+
+        /// <summary>取离点击点最近、且带 UnitView 的碰撞体。多个命中时按到点击点的距离决胜。</summary>
+        private static Collider2D PickUnitCollider(Collider2D[] hits, Vector2 point)
+        {
+            if (hits == null) return null;
+            Collider2D best = null;
+            float bestSqr = float.MaxValue;
+            foreach (var h in hits)
+            {
+                if (h == null || h.GetComponent<UnitView>() == null) continue;
+                float d = (h.bounds.center - (Vector3)point).sqrMagnitude;
+                if (d < bestSqr) { bestSqr = d; best = h; }
+            }
+            return best;
+        }
+
+        private bool PointerOverUi()
+        {
+            var es = EventSystem.current;
+            if (es == null) return false;
+            if (Input.touchCount > 0) return es.IsPointerOverGameObject(Input.GetTouch(0).fingerId);
+            return es.IsPointerOverGameObject();
+        }
+
+        private void OnUnitTapped(Unit unit)
+        {
+            if (unit == null || unit.IsDead) return;
+
+            if (unit.Team == Team.Player)
+            {
+                // 待选目标的单体治疗：点友方 = 定目标，不能把选中角色顶掉
+                if (_pendingSkill != null && NeedsSingleAlly(_pendingSkill))
+                {
+                    TryChooseSkill(_selectedActor, _pendingSkill.id, unit.Id);
+                    return;   // TryChooseSkill 内部已刷选择态与 HUD
+                }
+
+                _selectedActor = unit.Id;
+                _pendingSkill = null;
+                ShowRadial(unit.Id);
+            }
+            else
+            {
+                if (_pendingSkill == null)
+                {
+                    _selectedTarget = unit.Id;
+                    Log("锁定 " + unit.Name);
+                }
+                else if (NeedsSingleAlly(_pendingSkill))
+                {
+                    Log("此技能点友方");
+                }
+                else
+                {
+                    TryChooseSkill(_selectedActor, _pendingSkill.id, unit.Id);
+                }
+            }
+            RefreshSelection();
+        }
+
+        private void ShowRadial(string actorId)
+        {
+            if (!_views.TryGetValue(actorId, out var view)) return;
+            var skills = _engine.SkillsOf(actorId);
+            _radial.Show(view.transform.position, skills, s => _engine.CanUseSkill(actorId, s.id));
+        }
+
+        private void OnRadialPicked(SkillSpec s)
+        {
+            if (s == null || string.IsNullOrEmpty(_selectedActor)) return;
+            if (NeedsTarget(s))
+            {
+                _pendingSkill = s;
+                Log(s.name + "：请点目标");
+                RefreshSelection();
+            }
+            else
+            {
+                TryChooseSkill(_selectedActor, s.id, _selectedTarget ?? _selectedActor);
+            }
+        }
+
+        private static bool NeedsSingleEnemy(SkillSpec s) => s.damage != null && s.damage.target == "single";
+        private static bool NeedsSingleAlly(SkillSpec s) => s.heal != null && s.heal.target == "single";
+        private static bool NeedsTarget(SkillSpec s) => NeedsSingleEnemy(s) || NeedsSingleAlly(s);
+
+        private void TryChooseSkill(string actorId, string skillId, string targetId)
+        {
+            _pendingSkill = null;
+            if (_engine.ChooseSkill(actorId, skillId, targetId))
+            {
+                _queued[actorId] = SkillName(actorId, skillId);
+                Log(UnitName(actorId) + " " + SkillName(actorId, skillId) + " → " + UnitName(targetId) + "（已登记，结束回合结算）");
+            }
+            else
+            {
+                Log("出招失败（能量/目标不符）");
+            }
+            RefreshSelection();
+            RefreshHud();
         }
 
         // ---------- 建局 ----------
 
         private void NewBattle()
         {
-            _configError = null;
             _lastEvent = "";
+            _pendingSkill = null;
+            _queued.Clear();
+            if (_radial != null) _radial.Hide();
+
             var chars = ConfigLoader.LoadCharacters();
             var enemies = ConfigLoader.LoadEnemies();
             var cards = ConfigLoader.LoadCards();
@@ -57,19 +261,21 @@ namespace CQ.Runtime
             int errors = chars.errors.Count + enemies.errors.Count + cards.errors.Count + levels.errors.Count;
             if (errors > 0)
             {
-                _configError = "配置错误，查看 Console";
                 DumpErrors("角色", chars.errors);
                 DumpErrors("敌人", enemies.errors);
                 DumpErrors("卡", cards.errors);
                 DumpErrors("关卡", levels.errors);
+                _ui.ShowError("配置错误，查看 Console");
                 return;
             }
+
+            _ui.ClearError();
 
             _levels.Clear();
             _levels.AddRange(levels.items.OrderBy(l => l.id));
             if (_levels.Count == 0)
             {
-                _configError = "无可用关卡";
+                _ui.ShowError("无可用关卡");
                 return;
             }
             if (_levelIndex < 0) _levelIndex = 0;
@@ -85,7 +291,10 @@ namespace CQ.Runtime
 
             SpawnWorld();
             RefreshWorld();
-            Log("开战 " + (_levelIndex + 1) + "/" + _levels.Count + "：" + level.name);
+            RefreshSelection();
+            RefreshHud();
+            Log("开战 " + (_levelIndex + 1) + "/" + _levels.Count + "：" + level.name + "，点我方角色选招");
+            if (!string.IsNullOrEmpty(_selectedActor)) ShowRadial(_selectedActor);   // 开局即亮当前角色技能
         }
 
         private void SpawnWorld()
@@ -105,8 +314,9 @@ namespace CQ.Runtime
         {
             var go = new GameObject("Unit_" + unit.Id);
             go.transform.SetParent(_worldRoot, false);
-            go.transform.position = PositioningView.Position(unit, slot);
-            go.transform.localScale = Vector3.one * 1.3f;
+            go.transform.position = PositioningView.Position(unit, slot, layout);
+            // 不缩放根节点：缩放会同时放大碰撞体，造成相邻单位碰撞体重叠、选不中
+            go.transform.localScale = Vector3.one;
 
             var view = go.AddComponent<UnitView>();
             view.Setup(unit, UnitColor(unit, unit.IsDead));
@@ -127,11 +337,104 @@ namespace CQ.Runtime
             foreach (var u in _engine.Ctx.Units)
             {
                 if (!_views.TryGetValue(u.Id, out var v)) continue;
-                string intent = (u.Team == Team.Enemy && !u.IsDead) ? IntentText(u.Id, _engine.CurrentIntentOf(u.Id)) : "";
-                v.Refresh(u, intent);
-                v.SetColor(UnitColor(u, u.IsDead));
+                IntentConfig it = (u.Team == Team.Enemy && !u.IsDead) ? _engine.CurrentIntentOf(u.Id) : null;
+                v.Refresh(u, it != null ? IntentText(u.Id, it) : "", it != null ? it.type : "");
+                v.SetAppearance(UnitColor(u, u.IsDead), u.IsDead);
             }
         }
+
+        private void RefreshSelection()
+        {
+            if (_engine == null) return;
+            bool needEnemy = _pendingSkill != null && NeedsSingleEnemy(_pendingSkill);
+            bool needAlly = _pendingSkill != null && NeedsSingleAlly(_pendingSkill);
+            foreach (var u in _engine.Ctx.Units)
+            {
+                if (!_views.TryGetValue(u.Id, out var v)) continue;
+                if (u.IsDead) { v.SetHighlight(0); continue; }
+                if (u.Id == _selectedActor && _pendingSkill == null) { v.SetHighlight(1); continue; }
+                if (needEnemy && u.Team == Team.Enemy) { v.SetHighlight(2); continue; }
+                if (needAlly && u.Team == Team.Player) { v.SetHighlight(2); continue; }
+                v.SetHighlight(0);
+            }
+        }
+
+        private void RefreshHud()
+        {
+            if (_ui == null) return;
+            string order = "";
+            string winner = "";
+            if (_engine != null)
+            {
+                var cur = _engine.CurrentOrder;
+                order = (cur == null || cur.Count == 0)
+                    ? "(尚未出手)"
+                    : string.Join("\n", cur.Select(u =>
+                    {
+                        string tag = (u.Team == Team.Player ? "我 " : "敌 ") + u.Name + (u.IsDead ? "(亡)" : "");
+                        if (_queued.TryGetValue(u.Id, out var sk)) tag += "〔" + sk + "〕";
+                        return tag;
+                    }));
+                if (_engine.IsFinished)
+                    winner = _engine.Winner == Team.Player ? "我方胜利" : "我方失败";
+            }
+            bool hasNext = HasNextLevel();
+            _ui.Refresh(_engine != null ? _engine.Round : 1, order, winner, hasNext ? "下一关 → " + _levels[_levelIndex + 1].name : "", hasNext);
+            _ui.SetEvent(_lastEvent);
+        }
+
+        // ---------- 指令 ----------
+
+        private void EndRoundAction()
+        {
+            if (_engine == null || _engine.IsFinished) return;
+            Debug.Log("[CQ.Round] 结束回合被触发（Console 点开该条看堆栈，确认是按钮还是误触）");
+            var before = SnapshotHp();
+            var order = _engine.EndRound();
+            Log("出手：" + string.Join(" → ", order.Select(u => u.Name + (u.IsDead ? "(亡)" : ""))));
+            _pendingSkill = null;
+            _queued.Clear();
+            if (_radial != null) _radial.Hide();
+            RefreshWorld();
+            RefreshSelection();
+            RefreshHud();
+            FloatDeltas(before);
+        }
+
+        /// <summary>结算前后血量快照差 → 飘字。数值反馈（用户要求能看出掉血/回血）。</summary>
+        private Dictionary<string, int> SnapshotHp()
+        {
+            var map = new Dictionary<string, int>();
+            if (_engine == null) return map;
+            foreach (var u in _engine.Ctx.Units) map[u.Id] = u.Hp;
+            return map;
+        }
+
+        private void FloatDeltas(Dictionary<string, int> before)
+        {
+            if (_engine == null) return;
+            foreach (var u in _engine.Ctx.Units)
+            {
+                if (!before.TryGetValue(u.Id, out int hp0)) continue;
+                int delta = u.Hp - hp0;
+                if (delta == 0) continue;
+                if (!_views.TryGetValue(u.Id, out var v)) continue;
+                v.FloatText((delta > 0 ? "+" : "") + delta,
+                    delta > 0 ? new Color(0.4f, 1f, 0.5f) : new Color(1f, 0.45f, 0.45f));
+            }
+        }
+
+        private void NextLevelAction()
+        {
+            if (!HasNextLevel()) return;
+            _levelIndex++;
+            NewBattle();
+        }
+
+        private bool HasNextLevel() =>
+            _engine != null && _engine.IsFinished && _engine.Winner == Team.Player && _levelIndex + 1 < _levels.Count;
+
+        // ---------- 意图文本 ----------
 
         private string IntentText(string enemyId, IntentConfig it)
         {
@@ -160,69 +463,13 @@ namespace CQ.Runtime
             return name + " -" + damage;
         }
 
-        // ---------- 玩家指令 ----------
-
-        private void PlayCard(int handIndex)
-        {
-            if (_engine == null) return;
-            var id = handIndex >= 0 && handIndex < _engine.Hand.Count ? _engine.Hand[handIndex] : null;
-            string name = _engine.GetCard(id)?.name ?? id;
-            if (_engine.PlayCard(handIndex, _selectedTarget))
-            {
-                Log("打出 " + name + " → " + UnitName(_selectedTarget));
-                RefreshWorld();
-            }
-        }
-
-        private void ChooseSkill(string skillId)
-        {
-            if (_engine == null || string.IsNullOrEmpty(_selectedActor)) return;
-            var skill = FindSkillSpec(_selectedActor, skillId);
-            if (skill != null)
-            {
-                if (skill.heal != null && skill.heal.target == "single")
-                {
-                    var t = _engine.Ctx.GetUnit(_selectedTarget);
-                    if (t == null || t.Team != Team.Player) _selectedTarget = _selectedActor;
-                }
-                else if (skill.damage != null && skill.damage.target == "single")
-                {
-                    var t = _engine.Ctx.GetUnit(_selectedTarget);
-                    if (t == null || t.Team != Team.Enemy)
-                        _selectedTarget = _engine.Enemies.FirstOrDefault(e => !e.IsDead)?.Id;
-                }
-            }
-            if (_engine.ChooseSkill(_selectedActor, skillId, _selectedTarget))
-                Log(UnitName(_selectedActor) + " 选择 " + SkillName(_selectedActor, skillId));
-        }
-
-        private SkillSpec FindSkillSpec(string charId, string skillId)
-        {
-            var skills = _engine.SkillsOf(charId);
-            if (skills == null) return null;
-            foreach (var s in skills) if (s.id == skillId) return s;
-            return null;
-        }
-
-        private void EndRound()
-        {
-            if (_engine == null || _engine.IsFinished) return;
-            var order = _engine.EndRound();
-            Log("出手：" + string.Join(" → ", order.Select(u => u.Name + (u.IsDead ? "(亡)" : ""))));
-            RefreshWorld();
-        }
-
-        private void NextLevel()
-        {
-            if (_levelIndex + 1 >= _levels.Count) return;
-            _levelIndex++;
-            NewBattle();
-        }
+        // ---------- 辅助 ----------
 
         private void Log(string msg)
         {
             _lastEvent = msg;
             Debug.Log("[CQ.Battle] " + msg);
+            RefreshHud();
         }
 
         private void DumpErrors(string label, List<string> errors)
@@ -242,163 +489,6 @@ namespace CQ.Runtime
             if (skills == null) return skillId;
             foreach (var s in skills) if (s.id == skillId) return s.name;
             return skillId;
-        }
-
-        // ---------- HUD ----------
-
-        private void OnGUI()
-        {
-            if (!string.IsNullOrEmpty(_configError))
-            {
-                GUILayout.Label(_configError);
-                if (GUILayout.Button("重试加载")) NewBattle();
-                return;
-            }
-            if (_engine == null) return;
-
-            GUILayout.BeginArea(new Rect(8f, 8f, 180f, Screen.height - 16f), GUI.skin.box);
-            DrawActionBar();
-            GUILayout.EndArea();
-
-            GUILayout.BeginArea(new Rect(200f, 8f, Screen.width - 210f, Screen.height - 16f));
-            DrawMain();
-            GUILayout.EndArea();
-        }
-
-        private void DrawActionBar()
-        {
-            GUILayout.Label("== 行动条 ==");
-            GUILayout.Label("第 " + _engine.Round + " 回合");
-            if (_engine.IsFinished)
-                GUILayout.Label(_engine.Winner == Team.Player ? "我方胜利" : "我方失败");
-
-            var order = _engine.CurrentOrder;
-            if (order == null || order.Count == 0)
-            {
-                GUILayout.Label("(尚未出手)");
-            }
-            else
-            {
-                foreach (var u in order)
-                    GUILayout.Label((u.Team == Team.Player ? "我 " : "敌 ") + u.Name + (u.IsDead ? "(亡)" : ""));
-            }
-
-            GUILayout.Space(8);
-            GUILayout.Label("抽牌堆 " + _engine.Deck.DrawPileCount);
-            GUILayout.Label("弃牌堆 " + _engine.Deck.DiscardPileCount);
-        }
-
-        private void DrawMain()
-        {
-            if (_lastEvent.Length > 0) GUILayout.Label("最近：" + _lastEvent);
-            GUILayout.Space(8);
-
-            GUILayout.BeginHorizontal();
-            DrawEnemies();
-            DrawPlayers();
-            DrawSkills();
-            GUILayout.EndHorizontal();
-
-            DrawAllyTargets();
-            DrawHand();
-            DrawControls();
-        }
-
-        private void DrawEnemies()
-        {
-            GUILayout.BeginVertical(GUILayout.Width(220));
-            GUILayout.Label("— 敌方（点设为目标）—");
-            foreach (var e in _engine.Enemies)
-            {
-                bool sel = e.Id == _selectedTarget;
-                string line = (sel ? "▶ " : "") + e.Name + " " + e.Hp + "/" + e.MaxHp
-                    + (e.IsDead ? "" : " | " + IntentText(e.Id, _engine.CurrentIntentOf(e.Id)));
-                if (GUILayout.Button(line)) _selectedTarget = e.Id;
-            }
-            GUILayout.EndVertical();
-        }
-
-        private void DrawPlayers()
-        {
-            GUILayout.BeginVertical(GUILayout.Width(220));
-            GUILayout.Label("— 我方（点设操作角色）—");
-            foreach (var p in _engine.Players)
-            {
-                bool sel = p.Id == _selectedActor;
-                string line = (sel ? "▶ " : "") + p.Name + " " + p.Hp + "/" + p.MaxHp
-                    + " 能" + p.Energy + "/" + p.MaxEnergy + " 大" + p.Ult + "/" + p.MaxUlt + " " + p.Row;
-                if (GUILayout.Button(line))
-                {
-                    _selectedActor = p.Id;
-                }
-            }
-            GUILayout.EndVertical();
-        }
-
-        private void DrawSkills()
-        {
-            GUILayout.BeginVertical();
-            GUILayout.Label("— 技能（目标：" + UnitName(_selectedTarget) + "）—");
-            if (string.IsNullOrEmpty(_selectedActor)) { GUILayout.EndVertical(); return; }
-            var skills = _engine.SkillsOf(_selectedActor);
-            if (skills != null)
-            {
-                GUILayout.BeginHorizontal();
-                foreach (var s in skills)
-                {
-                    GUI.enabled = _engine.CanUseSkill(_selectedActor, s.id);
-                    if (GUILayout.Button(s.name)) ChooseSkill(s.id);
-                    GUI.enabled = true;
-                }
-                GUILayout.EndHorizontal();
-            }
-            GUILayout.EndVertical();
-        }
-
-        private void DrawAllyTargets()
-        {
-            GUILayout.Label("— 友方目标（治愈指向）—");
-            GUILayout.BeginHorizontal();
-            foreach (var p in _engine.Players)
-            {
-                bool sel = p.Id == _selectedTarget;
-                string line = (sel ? "▶ " : "") + p.Name + " " + p.Hp + "/" + p.MaxHp;
-                if (GUILayout.Button(line)) _selectedTarget = p.Id;
-            }
-            GUILayout.EndHorizontal();
-        }
-
-        private void DrawHand()
-        {
-            GUILayout.Label("— 手牌（点一张打出，作用于当前目标）—");
-            GUILayout.BeginHorizontal();
-            for (int i = 0; i < _engine.Hand.Count; i++)
-            {
-                var c = _engine.GetCard(_engine.Hand[i]);
-                if (GUILayout.Button(c != null ? c.name : _engine.Hand[i])) PlayCard(i);
-            }
-            if (_engine.Hand.Count == 0) GUILayout.Label("(空)");
-            GUILayout.EndHorizontal();
-        }
-
-        private void DrawControls()
-        {
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("结束回合")) EndRound();
-            if (GUILayout.Button("重开")) NewBattle();
-            GUILayout.EndHorizontal();
-
-            if (_engine.IsFinished && _engine.Winner == Team.Player)
-            {
-                if (_levelIndex + 1 < _levels.Count)
-                {
-                    if (GUILayout.Button("下一关 → " + _levels[_levelIndex + 1].name)) NextLevel();
-                }
-                else
-                {
-                    GUILayout.Label("★ 已打穿全部关卡 ★");
-                }
-            }
         }
     }
 }

@@ -182,6 +182,133 @@
 - 验证结果：编译全绿 + 全量测试通过 + Play 目视三类意图/治疗/友方目标均确认（用户确认）。
 - 补修：死亡敌人不再显示意图（`RefreshWorld` 与 `DrawEnemies` 按 `IsDead` 隐藏）。
 
+### 阶段 17：Android 横屏适配（Part 1 代码层）
+- **状态：** complete（文件层；待 Unity 编译 + 用户跑菜单配 PlayerSettings + Build）
+- 执行的操作：
+  - `BattleController.Start` 锁 `Screen.orientation = LandscapeLeft`；`Update` 读 `KeyCode.Escape` → `Application.Quit()`（Android 返回键）。
+  - 新增 `Editor/AndroidBuildMenu.cs`：菜单 `CQ/配置 Android PlayerSettings` 设包名 `com.dreamworld233.cq` + 横屏左 + ARMv7/ARM64 + minSdk 22 + IL2CPP。
+  - 结论：`CanvasScaler` 不适用（全 IMGUI，无 Canvas）；`OnApplicationPause/Focus` 无需代码（确定性状态机，内存态自然保留）。
+- 创建/修改的文件：
+  - `Assets/Scripts/Runtime/BattleController.cs`
+  - `Assets/Scripts/Editor/AndroidBuildMenu.cs`
+  - `findings.md`、`progress.md`
+- 待办：Unity 编译 + 跑菜单 `CQ/配置 Android PlayerSettings` → `CQ/创建战斗测试场景`（若场景无 BattleController）→ 保存场景 → Build APK → MuMuPlayer 或真机安装验证横屏 + 触控 + 返回键。
+- 验证结果：编译无误 + 全量测试全绿 + Build APK 成功（用户确认）。**真机蓝屏**：仅相机背景、无单位、无 HUD、无可交互 → 见阶段 18。
+
+### 阶段 18：真机空屏诊断记录（未修）
+- **状态：** 已记录根因与修复方向，待新对话修
+- 现象：Android 真机只蓝屏；编辑器 Play 正常。
+- 候选根因 1（强证据）：`ConfigJson` 用 System.IO（`Directory.Exists`/`File.ReadAllText`）读 `Application.streamingAssetsPath`，Android 该路径在 APK 内（jar:）读不到 → 配置失败 → `NewBattle` `return`，不 `SpawnWorld` → 无单位。
+- 候选根因 2：`CQ/创建战斗测试场景` 只在内存 `AddComponent`，不 `MarkSceneDirty`/不保存 → Build 的 SampleScene 磁盘版可能无 BattleController。
+- 修复方向：见 `findings.md`「真机空屏 bug」节（Android 安全读 JSON：UnityWebRequest / Resources / 拷 persistentDataPath；`[RuntimeInitializeOnLoadMethod]` 引导建 BattleController）。
+- 涉及文件（待改）：`Assets/Scripts/Runtime/Config/ConfigJson.cs`、`ConfigLoader.cs`、`Editor/BattleSceneMenu.cs`、或新增 bootstrap。
+
+### 阶段 19：修真机蓝屏（JSON 迁 Resources + 控制器引导）
+- **状态：** complete（用户真机验证通过）
+- 执行的操作：JSON 迁 `Assets/Resources/Data`；`ConfigJson.LoadAllFromResources`（`Resources.LoadAll<TextAsset>`）；`BattleController` 加 `[RuntimeInitializeOnLoadMethod]` 兜底。
+- 验证结果：真机不再蓝屏，有世界单位 + HUD（用户确认「现在可以了」）。
+
+### 阶段 20：uGUI 交互重做（点选 → 弧形技能 → 索敌）
+- **状态：** complete（文件层；待 Unity 编译 + 目视验证）
+- 执行的操作：
+  - 删 OnGUI 表现层，全迁 uGUI（Canvas Screen Space Overlay + CanvasScaler 1920×1080 + EventSystem + StandaloneInputModule）。
+  - 世界单位加 `BoxCollider2D`，`Physics2D.OverlapPoint` 点选：点我方角色选中（黄环）→ 角色上方弧形弹出 3 技能按钮 → 点敌人/友方索敌出招。
+  - 单体伤害点敌、单体治疗点友方、自愈/全体立即出招；不可用技能置灰。
+  - 左侧行动条（回合+出手顺序+最近事件）、底部大按钮 结束回合/重开/下一关。
+  - 手牌本期隐藏（卡牌交互后置）。
+  - 内置 CJK 字体 `Assets/Resources/Fonts/SimHei.ttf`（临时，正式发布换开源 Noto Sans SC）。
+- 创建/修改的文件：
+  - `Assets/Scripts/Runtime/BattleController.cs`（重写表现层）
+  - `Assets/Scripts/Runtime/BattleUi.cs`（新）
+  - `Assets/Scripts/Runtime/RadialSkillMenu.cs`（新）
+  - `Assets/Scripts/Runtime/UiKit.cs`（新）
+  - `Assets/Scripts/Runtime/UnitView.cs`（+BoxCollider2D + 高亮环）
+  - `Assets/Resources/Fonts/SimHei.ttf`（+ 元数据由 Unity 生成）
+  - `findings.md`、`progress.md`
+- 待办：Unity 编译通过（用户确认无报错）→ **点击无反馈 + 无环形技能**（见 findings「点击无反馈 bug」）→ 下午打日志定位再修。
+- 验证结果：编译无报错；世界单位 + HUD 可见，但点角色无高亮、无弧形菜单（待修，下午）。
+
+### 阶段 21：UI 素材盘点 + 交互方向修订（记录，明早动手）
+- **状态：** 记录完成（代码未动）
+- 素材到位（`Assets/Resources/` 下）：
+  - TMP 字体：`Fonts/SourceHanSansHWSC-Regular SDF.asset` + `Bold SDF.asset`（Font Asset Creator 生成，替代 legacy `Font` + SimHei）。
+  - 示意图 5 张：`Arts/UI/{战士,法师,盾兵,小怪,精英怪}示意图.png`（对应 sword/mage/guard + grunt/claw）。**缺 lord 一张**，可暂复用精英怪。
+  - 意图图标 4：`Arts/UI/{攻击,防御,增益,减益}.png`；选中框 `按钮选中框.png`。
+  - 缺：技能图标 9 个（后置）、面板/按钮 9-slice 描边底（后做）、lord 示意图。
+- 轮盘改法（用户定）：放弃扇形按钮，改 **3 个圆形可交互按钮**，代码定位在「选中角色上方」沿弧分布；技能图标文字占位，后补。
+- 明早顺序：
+  1. 字体迁 TMP：`UiKit.Font` 加载 `TMP_FontAsset`；`BattleUi`/`RadialSkillMenu` 文本 `Text`→`TextMeshProUGUI`。
+  2. 修「点击无反馈」bug（打日志二分，见 findings）——轮盘显示依赖此项。
+  3. `RadialSkillMenu` 改 3 圆按钮 + 锚点升到角色头顶弧状。
+  4. 意图图标 + 选中框接入 UI。
+  5. 单位 sprite 换 5 张示意图（替纯色方块）。
+
+### 阶段 22：表现层接线 + 点选链路修复（代码层）
+- **状态：** 文件层完成；**待 Unity 编译 + Play 验证**
+- 执行的操作：
+  - `EnsureCamera` 强制正交（size 5）+ 归位 (0,0,-10) + 深色底。理由：场景里已有 `SampleScene` 的 MainCamera，若是透视相机则 `ScreenToWorldPoint` 落点不在世界 z=0 平面 → 点选必打空（候选根因）。
+  - 点选改稳健：`Physics2D.OverlapPointAll(point, Physics2D.AllLayers)`（默认 layerMask 排除 Ignore Raycast 层会静默打空）+ 落空时 `OverlapCircleAll` 半径 0.9 触控容错取最近单位。
+  - 加诊断日志：`[CQ.Cam]` / `[CQ.Click]`（screen/world/overUi/hit/unit）/ `[CQ.Radial]`（canvas 尺寸/世界锚点/局部锚点/每个按钮落点）。开关 `verboseClick` / `verbose`。
+  - 新增 `ArtLibrary.cs`：按约定名从 `Resources/Arts/UI/` 加载示意图与意图图标，缺图回退纯色；敌人实例 id `grunt_0` → 配置 id `grunt`。映射 sword/mage/guard/grunt/claw → 战士/法师/盾兵/小怪/精英怪（lord 暂复用精英怪）。
+  - `UnitView` 重做：示意图子物体（按高 1.8 世界单位缩放）+ 死亡转灰 + 名字/血量/能量文字移到角色下方 + 文字设 `UiKit.Font`（CJK；原 Arial 无中文字形）+ `MeshRenderer.sortingOrder = 50`（原先文字被 sprite 盖住）+ 敌人意图图标 sprite + 选中高亮改「四边方框」（原先是一个方块整块盖住角色，看不出是选中）。
+  - `RadialSkillMenu` 重做：改 3 个圆形按钮（纯代码生成圆图），锚点从角色中心上移 105 + 弧半径 195，弧 140°→40°，直径 190（移动端热区）。
+  - 开局即亮当前角色技能弧（`NewBattle` 末尾 `ShowRadial`）。
+- 创建/修改的文件：
+  - `Assets/Scripts/Runtime/ArtLibrary.cs`（新）
+  - `Assets/Scripts/Runtime/{BattleController,UnitView,RadialSkillMenu,UiKit}.cs`
+  - `findings.md`、`progress.md`
+- 阻塞项：**TMP 迁移未做** —— 工程内无 `Assets/TextMesh Pro/`（TMP Essential Resources 未导入，全库只有 PackageCache 里的样例）。未导入时 TMP 组件运行时报找不到 TMP Settings，文字不显示。需用户执行 `Window > TextMeshPro > Import TMP Essential Resources` 后再迁 `TextMeshProUGUI`。
+- 待办：Unity 编译 → Play 看 `[CQ.Cam]` / `[CQ.Click]` / `[CQ.Radial]` 日志定位剩余问题。
+- 用户实测反馈：TMP 已导入 ✓；5 张示意图 + 4 图标 Import Settings 均为 `Sprite (2D and UI)` ✓；发现 3 个问题（怪物过挤选不中、友方碰撞体重叠选不中法师、点空白自动推进回合）。
+
+### 阶段 23：定位真根因（锚点反向 → 隐形全屏按钮）+ 阵型与选中修复
+- **状态：** 文件层完成；**待 Unity 编译 + Play 复验**
+- **真根因**：`BattleUi.BuildBottomControls` 三处写成 `Rect(rt, 1f, 1f, 0f, 0f, ...)`，而 `Rect` 的第 3/4 参数是 `anchorMax` → `anchorMin=(1,1)`、`anchorMax=(0,0)` **锚点反向**，静默变成拉伸矩形，实际占 x∈[−36,1584]、y∈[36,986]（1920×1080）→ 近全屏。
+  - 后果 1：`PointerOverUi()` 恒 true → `HandleUnitClick` 每次提前 return → 点谁都无反馈（阶段 20 的 bug 真因）。
+  - 后果 2：该按钮被点中 → `OnEndRound` → 点空白推进回合。
+  - 技能圆钮仍可用，因为它们是 Canvas 更靠后的子节点，射线在上层。
+- 修法：
+  - 三处锚点成对：结束回合/重开 → `Rect(rt, 1f, 0f, 1f, 0f, ...)`（右下）；下一关 → `0.5f,0.5f,0.5f,0.5f`（居中）。
+  - 命中改取「最近」：`PickUnitCollider(hits, point)` 按距离决胜（原先取数组第一个 → 某个角色永远选不中）。
+  - 阵型不再缩放根节点（`SpawnUnit` 去掉 `localScale 1.3`，缩放会放大碰撞体）；间距参数化 `BattleLayout.teamGap = 2.0` + `arenaShift = 0.9`；碰撞体 `1.4 × 1.7` → 同侧间距 > 碰撞体宽，互不重叠。
+  - 左侧行动条：宽 400 → 340，`raycastTarget = false`（纯展示不挡点选）。
+  - `BattleLayout` 挂 `BattleController` 作 `[SerializeField]`，Play 中可在 Inspector 实时调间距/位移/前后排 y。
+  - `EndRoundAction` 加 `[CQ.Round]` 日志（点开看堆栈确认触发者）。
+- 创建/修改的文件：
+  - `Assets/Scripts/Runtime/{BattleUi,PositioningView,BattleController,UnitView}.cs`
+  - `findings.md`、`progress.md`
+- 待办：Unity 编译 → Play 复验「点每个单位都能选中（含法师）→ 头顶弧 3 圆钮 → 点目标索敌」；确认 `[CQ.Click] overUi=False` 且点空白不再推进回合。
+- 说明：用户提议「手工搭场景解决 UI 问题」——不需要。全部 UI 由代码构建，问题在代码常量与锚点，场景不参与。
+- 用户复验：位置分布 OK。新报 3 个问题（守护选友方被顶掉、看不到数值/血条、领主关打不过）。
+
+### 阶段 24：指向反馈 + 数值可见 + 难度调整
+- **状态：** complete（用户确认「流程能跑通」）
+- 问题 1「守护点友方被顶掉」根因：`OnUnitTapped` 里 `Team.Player` 分支无条件 `_selectedActor = unit.Id; _pendingSkill = null; ShowRadial()` → 待选治疗目标时点友方被当成「切换选中角色」。
+  - 修法：该分支前置判断 `_pendingSkill != null && NeedsSingleAlly(_pendingSkill)` → `TryChooseSkill(_selectedActor, _pendingSkill.id, unit.Id)` 后 `return`（不再顶掉选中角色）。
+  - 反馈加强：`TryChooseSkill` 成功时日志补「（已登记，结束回合结算）」；左栏行动条给已登记角色加〔技能名〕标记（`_queued` 字典，`RefreshHud` 渲染，`EndRound`/`NewBattle` 清空）。
+- 问题 2「看不到数值」：`UnitView` 加纯代码数值条 —— 血条（双方，宽 1.5，比例填充、左对齐、≤30% 转红）+ 能量条（青）+ 大招条（金，仅我方）；名字/数值文字（`HP/MAX`、`能 x/3  大 y/3`）下移到条下方。新增 `FloatingText`（世界空间飘字，上浮淡出 1.1s 自毁）+ `BattleController.FloatDeltas`（回合结算前后血量快照差 → 绿 `+N` / 红 `-N`），让「打没打中 / 治没治上」一眼可见。
+- 问题 3「领主关打不过」：调 JSON（数值仍零硬编码）。
+  - `lord.json`：`maxHp 300→200`、`basic 40→22`、`aoe 25→12`、`charge nextDamage 120→50`（保留 `interruptible: true`，`BalanceTests.Lord_Has_Interruptible_Charge` 仍通过）。
+  - `claw.json`：`maxHp 90→60`、`slash 14→10`、`multi 6×3→4×3`。
+  - 依据：关卡 3 = 领主 + 2 爪牙，原总血 480、敌方每回合有效伤害约 75，我方总血 340 + 治疗约 60 → 5 回合内必崩；改后总血 320、敌方每回合约 55，先杀爪牙可翻盘。打断卡（蓄力唯一解法）本期 UI 未接，故蓄力从 120 降到 50。
+- 创建/修改的文件：
+  - `Assets/Scripts/Runtime/FloatingText.cs`（新）
+  - `Assets/Scripts/Runtime/{UnitView,BattleController}.cs`
+  - `Assets/Resources/Data/Enemies/{lord,claw}.json`
+  - `findings.md`、`progress.md`
+- 待办：Unity 编译 → 跑全量 EditMode（应仍全绿）→ Play 复验 3 点。
+- 验证结果：用户确认「流程能跑通」（选目标不再被顶掉、数值可见、领主关能过）。
+- 用户新反馈（延后，不着急）：**血条与伤害数值还不够醒目**，要更明显的数值表现（更大字号/更长的血条/伤害数字更突出/掉血闪白等）。
+
+### 阶段 25（延后待办）：数值表现强化
+- 状态：**未开始**（用户明确说暂不着急，延后）
+- 目标：让血条与伤害/治疗数值一眼可读。
+- 候选做法（新窗口从这里起步）：
+  - 血条加粗加长（`UnitView.BarW` / `HpY` 等常量）、加描边底与分段刻度。
+  - 飘字放大（`FloatingText` 的 `fontSize 56` / `characterSize 0.07`）、加粗体 TMP、停留更久、受击方闪白/抖动。
+  - 结算时在左栏行动条按顺序补「谁对谁造成 N」的逐条日志（目前只在 `EndRoundAction` 出一行总览）。
+  - 若迁完 TMP：用 SDF 字体做描边/阴影，数值更清楚。
+
 ## 测试结果
 | 测试 | 输入 | 预期结果 | 实际结果 | 状态 |
 |------|------|---------|---------|------|
@@ -195,17 +322,21 @@
 ## 五问重启检查
 | 问题 | 答案 |
 |------|------|
-| 我在哪里？ | 阶段 16 全绿（66 测试）；意图三分类/治愈选友方/减益/死亡隐藏意图均确认；已提交 `8271ccc` |
-| 我要去哪里？ | 明天：Android 横屏适配（方向锁定/CanvasScaler/触控/返回键/生命周期）→ 构建 APK → 模拟器或真机验证 → 录屏 |
+| 我在哪里？ | 阶段 24 已被用户验收「流程能跑通」。当前可用：点选→头顶弧 3 圆钮→索敌→结束回合；血条/能量条/大招条/飘字已接；3 关可打 |
+| 我要去哪里？ | 阶段 25（延后）：数值表现强化（血条更醒目、伤害数字更突出）；再迁 TMP；再打包真机 → 录屏 → 验收 |
 | 目标是什么？ | Android 横屏可玩可讲的 2.5D 回合制垂直切片 |
-| 我学到了什么？ | 见 findings.md（平台决策 + 战斗表现修订 + 意图预锁 + 减益/治愈） |
-| 我做了什么？ | 修 2 bug + 意图三分类显示 + 目标预锁 + 减益意图 + 治愈选友方 + 死亡隐藏意图 |
+| 我学到了什么？ | 真根因往往是「一行参数写错」（`Rect` 锚点对调 → 隐形全屏遮罩），比自己以为的架构问题更常见；点同一物体有两种语义时必须先判状态；数值反馈是回合制可玩性硬需求 |
+| 我做了什么？ | 阶段 17 Android 适配 + 18 诊断 + 19 修真机蓝屏 + 20 uGUI 重做 + 21 素材盘点 + 22 表现层接线 + 23 定位真根因 + **24 指向/数值/难度（已验收）** |
 
 ## 下次继续（从这开始）
-- 命令行恢复：读 `progress.md` 本表 + `findings.md`。
-- **明天第一件**：Android 横屏适配（T10 续）：方向锁定横屏、`CanvasScaler` Scale With Screen Size、触控热区、Android 返回键、`OnApplicationPause/Focus` 保战斗状态。
-- 然后 Android 构建 APK + 模拟器（本机 MuMuPlayer）或真机验证。
-- 待办余项：T13 录屏、T14 验收清单核对；远端 push 由用户本地完成。
+- **新窗口恢复**：读 `progress.md` 的阶段 25 + 最近阶段 24 + `findings.md`「指向与数值反馈」节；再看 `Assets/Scripts/Runtime/` 下 `BattleController.cs` / `UnitView.cs` / `RadialSkillMenu.cs` / `BattleUi.cs` / `UiKit.cs` / `ArtLibrary.cs` / `FloatingText.cs`。
+- **当前可用状态**：Play 直接跑（无需搭场景，`BattleController` 有 `[RuntimeInitializeOnLoadMethod]` 自举）。点我方角色 → 头顶弧 3 圆钮 → 点敌/友方索敌 → 结束回合。3 关可打。
+- **第一件（阶段 25，用户指定延后但不着急）**：数值表现强化 —— 血条更粗更长、飘字更大更久、受击反馈（闪白/抖动）、左栏逐条伤害日志。相关常量在 `UnitView`（`BarW` / `HpY` / `EnergyY` / `UltY` / `LabelY` / `FloatY`）与 `FloatingText`（`fontSize` / `characterSize` / `Life`）。
+- **第二件（迁 TMP）**：`UiKit.Font` 改加载 `TMP_FontAsset`（`Resources/Fonts/SourceHanSansHWSC-Regular SDF`）；`UiKit.MakeText` 改产出 `TextMeshProUGUI`；`BattleUi`/`RadialSkillMenu` 文本 `Text`→`TextMeshProUGUI`；`UnitView` 的 `TextMesh` + `FloatingText` 改 `TextMeshPro`（3D）；`CQ.Runtime.asmdef` 的 `references` 加 `Unity.TextMeshPro`。之后可删 SimHei。
+- **第三件**：`按钮选中框.png` 作按钮/面板底框（9-slice）；技能图标 9 个后补；lord 示意图后补；确认无误后关掉 `verboseClick` / `verbose` 诊断日志。
+- **第四件（后置）**：卡牌交互接回（uGUI 底部手牌面板）；接回后蓄力可被打断，领主关可再调硬（现 `lord.json` 蓄力 50 是为「无打断卡」而降的）。
+- 之后：打包真机复验（横屏 + 触控 + 返回键）→ T13 录屏 → T14 验收。
+- 提交：本地 `git commit` 由我执行；远端 push 用户本地完成。
 
 ## 提交记录（本次会话）
 | 提交 | 内容 |

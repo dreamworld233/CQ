@@ -11,6 +11,10 @@ namespace CQ.Runtime
     /// </summary>
     public static class ConfigJson
     {
+        /// <summary>
+        /// 文件系统加载（PC 编辑器 / EditMode 测试用）。Android 上 streamingAssetsPath
+        /// 在 APK 内（jar:），System.IO 读不到，故真机不走此路径。
+        /// </summary>
         public static LoadResult<T> LoadAll<T>(string directory, Func<T, string> validate) where T : class
         {
             var result = new LoadResult<T>();
@@ -37,6 +41,33 @@ namespace CQ.Runtime
                 catch (Exception e)
                 {
                     result.errors.Add(name + ": " + e.Message);
+                }
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Resources 同步加载（跨平台安全，Android 真机可用）。JSON 位于任一 Resources
+        /// 目录下，按文件名 + 扩展名作为 TextAsset 打进包，`Resources.LoadAll` 在真机同步读得到。
+        /// </summary>
+        public static LoadResult<T> LoadAllFromResources<T>(string resourceFolder, Func<T, string> validate) where T : class
+        {
+            var result = new LoadResult<T>();
+            var textAssets = Resources.LoadAll<TextAsset>(resourceFolder);
+            foreach (var ta in textAssets)
+            {
+                try
+                {
+                    var item = JsonUtility.FromJson<T>(ta.text);
+                    var error = validate != null ? validate(item) : null;
+                    if (string.IsNullOrEmpty(error))
+                        result.items.Add(item);
+                    else
+                        result.errors.Add(ta.name + ": " + error);
+                }
+                catch (Exception e)
+                {
+                    result.errors.Add(ta.name + ": " + e.Message);
                 }
             }
             return result;
