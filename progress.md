@@ -373,6 +373,20 @@
 - 验证：`Unity.exe -batchmode -runTests -testPlatform EditMode` → **75/75 通过**，日志中 `was not found / Unable to add / atlas texture` 警告 0 条。
 - 待办：Play 目视确认不再有该警告；其余不变。
 
+### 阶段 25.2：素材接线收尾（选中圆环 / 技能图标占位 / 关诊断日志）
+- **状态：** complete（Unity 全量 EditMode 78/78 通过；缺字形警告 0）
+- 执行的操作：
+  - 探明素材：`按钮选中框.png` 用 PIL 实测是**空心白色圆环**（200×200，环宽约 11px、外径约 184px、近白），不是矩形 9-slice 底框 —— 不做面板拉伸，改当「脚下选中圆环」用。
+  - `UnitView`：选中(黄)/可作目标(青)时脚下显圆环（`RingY=-0.78`、直径 1.9），原代码四边方框留作素材缺失兜底；`SetHighlight` 圆环优先。
+  - 技能图标占位：`ArtLibrary.SkillIcon`（伤害→攻击图标、治疗→增益图标）；`UiKit.MakeCircleButton` 加 `icon` 参数（图标居上、文字下沉）。真图标 9 个到位只改 `SkillIcon` 一个映射。
+  - 关诊断日志：`BattleController.verboseClick`、`RadialSkillMenu.verbose` 默认 false。
+- 创建/修改的文件：
+  - `Assets/Scripts/Runtime/{ArtLibrary,UiKit,UnitView,RadialSkillMenu,BattleController}.cs`
+  - `Assets/Tests/EditMode/ArtLibraryTests.cs`（新，3 条）
+  - `findings.md`、`progress.md`
+- 验证：`dotnet build CQ.Runtime.csproj` 0 error；`Unity.exe -batchmode -runTests -testPlatform EditMode` → **78/78 通过**（`ArtLibraryTests 3/3`）。跑完已 `git checkout` 还原两份 SDF 字形缓存。
+- 仍缺（素材层，用户后补）：lord 真示意图、9 个真技能图标、面板/按钮 9-slice 底。
+
 ### 阶段 25：TMP 迁移 + 数值表现强化（合并做）
 - **状态：** 代码层完成；离线验证通过；**待 Unity 全量 EditMode + Play 目视**
 - 执行的操作：
@@ -441,9 +455,9 @@
 ## 下次继续（从这开始）
 - **先看第 0 节「收工快照 / 恢复手册」**：里面有恢复步骤、Play 验收清单、跑测试命令与坑、memos 插件状态、环境速查。
 - **新窗口恢复**：读 `progress.md` 阶段 25 / 25.1 + `findings.md`「TMP 迁移与数值表现（阶段 25）」节；再看 `Assets/Scripts/Runtime/` 下 `TmpKit.cs`（字体装载/定标/图集）/ `UiKit.cs` / `BattleUi.cs` / `UnitView.cs` / `FloatingText.cs` / `BattleController.cs`。
-- **当前可用状态**：Play 直接跑（无需搭场景，`BattleController` 有 `[RuntimeInitializeOnLoadMethod]` 自举）。点我方角色 → 头顶弧 3 圆钮 → 点敌/友方索敌 → 结束回合。3 关可打。全量 EditMode 75/75 绿。
-- **第一件**：Play 目视复核 —— 血条（加粗/刻度/条上 `HP/MAX`/残血脉冲）、飘字（更大更久/按伤害放大）、受击闪白 + 抖动、左栏「战报」逐条伤害、中文字体，且 Console 无缺字形警告。常量在 `UnitView`（顶部布局常量）与 `FloatingText`（`Life`/`Pop*`/`MinH`/`MaxH`）。
-- **第二件**：`按钮选中框.png` 作按钮/面板底框（9-slice）；技能图标 9 个后补；lord 示意图后补；确认无误后关掉 `verboseClick`（`BattleController`）/ `verbose`（`RadialSkillMenu`）诊断日志。
+- **当前可用状态**：Play 直接跑（无需搭场景，`BattleController` 有 `[RuntimeInitializeOnLoadMethod]` 自举）。点我方角色 → 头顶弧 3 圆钮（带占位图标）→ 点敌/友方索敌 → 结束回合；选中的单位脚下显黄色圆环，可选目标显青色圆环。3 关可打。全量 EditMode 78/78 绿。
+- **第一件**：Play 目视复核 —— 血条（加粗/刻度/条上 `HP/MAX`/残血脉冲）、飘字（更大更久/按伤害放大）、受击闪白 + 抖动、左栏「战报」逐条伤害、中文字体、脚下选中圆环、技能钮图标，且 Console 无缺字形警告。常量在 `UnitView`（顶部布局常量）与 `FloatingText`（`Life`/`Pop*`/`MinH`/`MaxH`）。
+- **第二件（阶段 25.2 已做，只剩素材缺口）**：`按钮选中框.png` 已接成**脚下选中圆环**（实测是空心圆环，不是 9-slice 底框）；技能图标用「攻击/增益」占位（真图标 9 个到位只改 `ArtLibrary.SkillIcon`）；`verboseClick` / `verbose` 诊断日志已关。仍缺（素材层，用户后补）：lord 真示意图、9 个真技能图标、面板/按钮 9-slice 底。
 - **第三件（后置）**：卡牌交互接回（uGUI 底部手牌面板）；`BattleEngine.RoundEvents` 已带 `Kind=Card` 分支与 `IntentLabel`，接回即用。接回后蓄力可被打断，领主关可再调硬（现 `lord.json` 蓄力 50 是为「无打断卡」而降的）。
 - 之后：打包真机复验（横屏 + 触控 + 返回键）→ T13 录屏 → T14 验收。
 - 提交：本地 `git commit` 由我执行；远端 push 用户本地完成。
@@ -471,6 +485,7 @@
 | e023169 | 文档：记录 6dd5df2 + 下一件（Play 目视） |
 | 0f8fa45 | 修 TMP 缺字形警告（✕ 无字形 + 图集 1024→2048 + 多图集）+ 字符覆盖回归 + 75/75 全绿 |
 | （未提交，不属仓库） | `C:\Users\19793\.dsh\profiles\web\cordis.patch.yml` 启用 memos 插件；`Logs/` 下证据与临时脚本（gitignore） |
+| (阶段 25.2) | 素材接线收尾：选中圆环 + 技能图标占位 + 关诊断日志 + ArtLibraryTests（78/78 绿） |
 
 ---
 

@@ -1,11 +1,12 @@
 using System.Collections.Generic;
+using CQ.Core.Config;
 using UnityEngine;
 
 namespace CQ.Runtime
 {
     /// <summary>
-    /// 表现层素材库：按约定名从 `Resources/Arts/UI/` 加载单位示意图与敌人意图图标。
-    /// 缺素材返回 null，调用方回退纯色占位，保证不空引用。
+    /// 表现层素材库：按约定名从 `Resources/Arts/UI/` 加载单位示意图、敌人意图图标、选中圆环。
+    /// 缺素材返回 null，调用方回退纯色/代码图形占位，保证不空引用。
     /// （表现层映射，非平衡数值，不进 JSON。）
     /// </summary>
     public static class ArtLibrary
@@ -47,6 +48,25 @@ namespace CQ.Runtime
         {
             if (string.IsNullOrEmpty(intentType)) return null;
             return IntentArt.TryGetValue(intentType, out var file) ? Load(file) : null;
+        }
+
+        /// <summary>
+        /// 选中/可选目标圆环（`按钮选中框.png`）。
+        /// 注意：该素材实测是**空心圆环**（200×200，环宽约 11px、外径约 184px，近白色），
+        /// 不是矩形面板底框，所以不做 9-slice，直接当圆环用。
+        /// </summary>
+        public static Sprite RingSprite() => Load("按钮选中框");
+
+        /// <summary>
+        /// 技能图标占位：伤害类 → 攻击图标，治疗/增益类 → 增益图标。
+        /// 真图标（9 个）到位后只改这里，不动 UI 结构。
+        /// </summary>
+        public static Sprite SkillIcon(SkillSpec skill)
+        {
+            if (skill == null) return null;
+            if (skill.damage != null) return Load("攻击");
+            if (skill.heal != null) return Load("增益");
+            return null;
         }
 
         public static Sprite Load(string fileName)

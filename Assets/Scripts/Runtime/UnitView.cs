@@ -37,6 +37,8 @@ namespace CQ.Runtime
         private const float LabelTextH = 0.28f;
         private const float StatTextH = 0.24f;
         private const float IntentTextH = 0.36f;
+        private const float RingSize = 1.9f;       // 选中圆环目标世界直径
+        private const float RingY = -0.78f;        // 圆环 y（贴脚下）
 
         private const float FlashDur = 0.28f;      // 受击闪白时长
         private const float ShakeDur = 0.22f;      // 受击抖动时长
@@ -52,6 +54,7 @@ namespace CQ.Runtime
         private TextMeshPro _intent;
         private Transform _frame;
         private readonly SpriteRenderer[] _frameBars = new SpriteRenderer[4];
+        private SpriteRenderer _ring;              // 选中/可选目标圆环（素材 `按钮选中框.png`）
         private bool _teamTint;
 
         private SpriteRenderer _hpFill;
@@ -103,6 +106,7 @@ namespace CQ.Runtime
             TmpKit.SetOutline(_label, new Color(0f, 0f, 0f, 0.9f), 0.2f);
 
             _frame = MakeFrame();
+            _ring = MakeRing();   // 有圆环素材时用圆环，方框仅作兜底
 
             var col = gameObject.AddComponent<BoxCollider2D>();
             col.size = new Vector2(ColliderW, ColliderH);
@@ -183,13 +187,21 @@ namespace CQ.Runtime
             if (_flashT <= 0f) _sr.color = _tint;
         }
 
-        /// <summary>0=无框，1=选中（黄），2=可作目标（青）。</summary>
+        /// <summary>0=无高亮，1=选中（黄），2=可作目标（青）。有圆环素材用脚下圆环，否则回退代码方框。</summary>
         public void SetHighlight(int mode)
         {
+            var c = mode == 1 ? new Color(1f, 0.85f, 0.2f) : new Color(0.3f, 0.9f, 1f);
+
+            if (_ring != null)
+            {
+                _ring.gameObject.SetActive(mode != 0);
+                if (mode != 0) _ring.color = c;
+                return;
+            }
+
             if (_frame == null) return;
             if (mode == 0) { _frame.gameObject.SetActive(false); return; }
             _frame.gameObject.SetActive(true);
-            var c = mode == 1 ? new Color(1f, 0.85f, 0.2f) : new Color(0.3f, 0.9f, 1f);
             foreach (var b in _frameBars) if (b != null) b.color = c;
         }
 
@@ -296,6 +308,24 @@ namespace CQ.Runtime
             AddFrameBar(root.transform, 3, new Vector3(FrameHalf, 0f, 0f), new Vector3(FrameThick, FrameFull, 1f));
             root.SetActive(false);
             return root.transform;
+        }
+
+        /// <summary>脚下选中圆环（素材 `按钮选中框.png`）。素材缺失返回 null，调用方回退方框。</summary>
+        private SpriteRenderer MakeRing()
+        {
+            var sprite = ArtLibrary.RingSprite();
+            if (sprite == null) return null;
+
+            _frame.gameObject.SetActive(false);
+            var go = new GameObject("HighlightRing");
+            go.transform.SetParent(transform, false);
+            go.transform.localPosition = new Vector3(0f, RingY, 0f);
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = sprite;
+            sr.sortingOrder = 30;
+            FitSpriteHeight(go.transform, sprite, RingSize);
+            go.SetActive(false);
+            return sr;
         }
 
         private void AddFrameBar(Transform parent, int index, Vector3 localPos, Vector3 scale)

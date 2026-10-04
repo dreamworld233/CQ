@@ -16,7 +16,7 @@ namespace CQ.Runtime
     {
         public Action<SkillSpec> OnPick;
 
-        [SerializeField] private bool verbose = true;
+        [SerializeField] private bool verbose = false;   // 诊断日志（定位点选/坐标问题时打开）
 
         private readonly List<GameObject> _buttons = new List<GameObject>();
         private RectTransform _canvas;
@@ -79,7 +79,9 @@ namespace CQ.Runtime
                 bool usable = canUse != null && canUse(s);
                 // 不可用标记用 ×(U+00D7)：✕(U+2715) 不在思源黑体字形表里，TMP 会换成 □ 并刷警告
                 string label = usable ? s.name : s.name + "\n×";
-                var btn = UiKit.MakeCircleButton(_canvas, label, 30, usable ? UsableBg : DisabledBg, Diameter);
+                // 技能图标暂用意图图标占位（伤害→攻击 / 治疗→增益），真图标到位只改 ArtLibrary.SkillIcon
+                var icon = ArtLibrary.SkillIcon(s);
+                var btn = UiKit.MakeCircleButton(_canvas, label, 30, usable ? UsableBg : DisabledBg, Diameter, icon);
                 btn.name = "Skill_" + s.id;
                 btn.interactable = usable;
 

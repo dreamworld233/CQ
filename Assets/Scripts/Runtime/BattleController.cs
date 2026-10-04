@@ -104,7 +104,7 @@ namespace CQ.Runtime
         // ---------- 点选输入 ----------
 
         private const float TapRadius = 0.9f;   // 触控容错半径（世界单位）
-        [SerializeField] private bool verboseClick = true;
+        [SerializeField] private bool verboseClick = false;   // 诊断日志（点选打空时打开看 screen/world/overUi/hit）
 
         private void HandleUnitClick()
         {

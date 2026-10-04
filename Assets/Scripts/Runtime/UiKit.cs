@@ -81,8 +81,12 @@ namespace CQ.Runtime
             return btn;
         }
 
-        /// <summary>圆形技能按钮：纯代码生成圆图，热区为整块方形（移动端好点）。</summary>
-        public static Button MakeCircleButton(Transform parent, string label, int fontSize, Color bg, float diameter)
+        /// <summary>
+        /// 圆形技能按钮：纯代码生成圆图，热区为整块方形（移动端好点）。
+        /// icon 非空时图标居上、文字下沉；缺图标则只剩居中文字（原有表现）。
+        /// </summary>
+        public static Button MakeCircleButton(Transform parent, string label, int fontSize, Color bg,
+            float diameter, Sprite icon = null)
         {
             var rt = AddRect(parent, "CircleButton",
                 new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
@@ -98,7 +102,30 @@ namespace CQ.Runtime
             var labelT = MakeText(rt, label, fontSize, Color.white, TextAnchor.MiddleCenter, true);
             labelT.enableWordWrapping = true;
             TmpKit.SetOutline(labelT, new Color(0f, 0f, 0f, 0.85f), 0.18f);
+
+            if (icon != null) LayoutCircleIcon(rt, icon, labelT, diameter);
             return btn;
+        }
+
+        /// <summary>圆钮内图标 + 文字两行布局（图标居上、文字下沉）。</summary>
+        private static void LayoutCircleIcon(RectTransform button, Sprite icon, TMP_Text label, float diameter)
+        {
+            float box = diameter * 0.44f;
+            var iconRt = AddRect(button, "Icon",
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
+                new Vector2(0f, diameter * 0.18f), new Vector2(box, box));
+            var iconImg = iconRt.gameObject.AddComponent<Image>();
+            iconImg.sprite = icon;
+            iconImg.preserveAspect = true;
+            iconImg.raycastTarget = false;
+
+            var lrt = (RectTransform)label.transform;
+            lrt.anchorMin = new Vector2(0.5f, 0.5f);
+            lrt.anchorMax = new Vector2(0.5f, 0.5f);
+            lrt.pivot = new Vector2(0.5f, 0.5f);
+            lrt.sizeDelta = new Vector2(diameter * 0.92f, diameter * 0.34f);
+            lrt.anchoredPosition = new Vector2(0f, -diameter * 0.24f);
+            label.fontSize = Mathf.Max(12f, Mathf.RoundToInt(label.fontSize * 0.8f));
         }
 
         private static Sprite _circle;
