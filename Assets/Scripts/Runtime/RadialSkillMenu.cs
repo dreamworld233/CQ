@@ -15,6 +15,8 @@ namespace CQ.Runtime
     public sealed class RadialSkillMenu : MonoBehaviour
     {
         public Action<SkillSpec> OnPick;
+        public Action OnCancel;
+        private readonly List<Action> _refreshers = new List<Action>();
 
         [SerializeField] private bool verbose = false;   // 诊断日志（定位点选/坐标问题时打开）
 
@@ -44,7 +46,8 @@ namespace CQ.Runtime
             _cam = cam;
         }
 
-        public void Show(Vector3 worldAnchor, IReadOnlyList<SkillSpec> skills, Func<SkillSpec, bool> canUse)
+        public void Show(Vector3 worldAnchor, IReadOnlyList<SkillSpec> skills, Func<SkillSpec, bool> canUse,
+            Func<bool> canCancel = null, Func<bool> hasRequest = null)
         {
             Clear();
             gameObject.SetActive(true);
@@ -89,7 +92,22 @@ namespace CQ.Runtime
                 rt.anchoredPosition = pos;
 
                 SkillSpec captured = s;
-                btn.onClick.AddListener(() => OnPick?.Invoke(captured));
+                btn.onClick.AddListener(() =>
+                {
+                    if (canCancel != null && canCancel()) OnCancel?.Invoke();
+                    else if (canUse != null && canUse(captured)) OnPick?.Invoke(captured);
+                });
+                var text = btn.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+                _refreshers.Add(() =>
+                {
+                    bool cancel = canCancel != null && canCancel();
+                    bool ready = canUse != null && canUse(captured);
+                    bool requested = hasRequest != null && hasRequest();
+                    btn.interactable = cancel || ready;
+                    btn.image.color = btn.interactable ? UsableBg : DisabledBg;
+                    string state = cancel ? "\n取消排队" : requested ? "\n播放中" : ready ? "" : "\n未就绪";
+                    if (text != null) text.text = captured.name + state;
+                });
                 _buttons.Add(btn.gameObject);
 
                 if (log != null) log.Append("\n  [").Append(i).Append("] ").Append(s.name)
@@ -105,9 +123,15 @@ namespace CQ.Runtime
             gameObject.SetActive(false);
         }
 
+        private void Update()
+        {
+            foreach (var refresh in _refreshers) refresh();
+        }
+
         private void Clear()
         {
-            foreach (var b in _buttons) { if (b != null) Destroy(b); }
+            _refreshers.Clear();
+            foreach (var b in _buttons) { if (b != null) { b.SetActive(false); Destroy(b); } }
             _buttons.Clear();
         }
 

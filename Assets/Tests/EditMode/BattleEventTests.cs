@@ -73,7 +73,7 @@ public class BattleEventTests
         eng.StartBattle();
 
         var before = eng.Ctx.Units.ToDictionary(u => u.Id, u => u.Hp);
-        eng.EndRound();
+        BattleTestDriver.CompleteRound(eng);
 
         Assert.IsNotEmpty(eng.RoundEvents, "结算后应有事件");
 
@@ -100,7 +100,7 @@ public class BattleEventTests
         var eng = Make(3, new[] { C("mage", 90, 20, 11, aoe: true) },
             new[] { E("e0", 60, 1, 1), E("e1", 60, 1, 1), E("e2", 60, 1, 1) });
         eng.StartBattle();
-        eng.EndRound();
+        BattleTestDriver.CompleteRound(eng);
 
         var hits = eng.RoundEvents.Where(e => e.Kind == BattleEventKind.Skill && e.HpDelta < 0).ToList();
         Assert.AreEqual(3, hits.Count, "全体普攻应产生 3 条命中事件");
@@ -113,7 +113,7 @@ public class BattleEventTests
     {
         var eng = Make(5, new[] { C("sword", 120, 1, 1) }, new[] { E("grunt", 60, 20, 13) });
         eng.StartBattle();
-        eng.EndRound();
+        BattleTestDriver.CompleteRound(eng);
 
         var ev = eng.RoundEvents.FirstOrDefault(e => e.Kind == BattleEventKind.Intent);
         Assert.IsNotNull(ev, "敌方出手应有意图事件");
@@ -129,7 +129,7 @@ public class BattleEventTests
             new[] { E("killer", 100, 20, 20), E("follower", 100, 10, 7) });
         eng.StartBattle();
         eng.Ctx.FormationOf(Team.Player).GetSlot("front2").AddModifier(-100, 1);
-        eng.EndRound();
+        BattleTestDriver.CompleteRound(eng);
 
         var hits = eng.RoundEvents.Where(e => e.Kind == BattleEventKind.Intent && e.HpDelta < 0).ToList();
         Assert.AreEqual(2, hits.Count);
@@ -153,11 +153,11 @@ public class BattleEventTests
         var eng = Make(11, new[] { C("sword", 120, 10, 12) }, new[] { E("grunt", 200, 4, 10) });
         eng.StartBattle();
 
-        eng.EndRound();
+        BattleTestDriver.CompleteRound(eng);
         int firstRound = eng.RoundEvents.Count;
         Assert.Greater(firstRound, 0);
 
-        eng.EndRound();
+        BattleTestDriver.CompleteRound(eng);
         Assert.AreEqual(firstRound, eng.RoundEvents.Count, "事件列表应每回合清空，不跨回合堆积");
     }
 }

@@ -16,11 +16,6 @@ namespace CQ.Core.Battle
         Finished
     }
 
-    /// <summary>
-    /// 回合状态机骨架。单回合：RoundStart → Sorting → Acting → DeathCheck → RoundEnd。
-    /// 骨架阶段 actResolver 默认空跑（不产生伤害），T7 接入真实技能/卡牌结算；
-    /// speedOf 注入本回合速度修正（T6 状态系统落地前提/降速前先传 BaseSpeed）。
-    /// </summary>
     public sealed class TurnManager
     {
         private readonly List<Unit> _players;
@@ -48,34 +43,34 @@ namespace CQ.Core.Battle
         public bool AllPlayersDead => !_players.Any(u => !u.IsDead);
         public bool AllEnemiesDead => !_enemies.Any(u => !u.IsDead);
 
-        /// <summary>跑一个小回合，返回本回合行动顺序快照。已完成时返回空。</summary>
-        public IReadOnlyList<Unit> RunRound(Action<Unit> actResolver = null)
-        {
-            if (IsFinished) return new List<Unit>();
+        private ActionQueue _queue;
 
+        public IReadOnlyList<Unit> BeginActions()
+        {
+            if (IsFinished || Phase == BattlePhase.Acting) return null;
             Phase = BattlePhase.RoundStart;
             Round++;
-
             Phase = BattlePhase.Sorting;
-            var alive = AliveUnits.ToList();
-            var order = SpeedSorter.Sort(alive, _speedOf);
-            var queue = new ActionQueue(order);
-
+            var order = SpeedSorter.Sort(AliveUnits.ToList(), _speedOf);
+            _queue = new ActionQueue(order);
             Phase = BattlePhase.Acting;
-            while (queue.HasNext)
-            {
-                var unit = queue.Next();
-                if (unit == null || unit.IsDead) continue;
-                actResolver?.Invoke(unit);
-                ResolveWin();
-                if (IsFinished) break;
-            }
-
-            Phase = BattlePhase.DeathCheck;
-            ResolveWin();
-
-            if (!IsFinished) Phase = BattlePhase.RoundEnd;
             return order;
+        }
+
+        public Unit NextNormal()
+        {
+            if (IsFinished || Phase != BattlePhase.Acting) return null;
+            while (_queue.HasNext)
+            {
+                var unit = _queue.Next();
+                if (unit != null && !unit.IsDead) return unit;
+            }
+            return null;
+        }
+
+        public void CompleteRound()
+        {
+            if (!IsFinished && Phase == BattlePhase.Acting) Phase = BattlePhase.RoundEnd;
         }
 
         public void CheckWinner() => ResolveWin();
@@ -92,7 +87,11 @@ namespace CQ.Core.Battle
                 IsFinished = true;
                 Winner = Team.Enemy;
             }
-            if (IsFinished) Phase = BattlePhase.Finished;
+            if (IsFinished)
+            {
+                _queue = null;
+                Phase = BattlePhase.Finished;
+            }
         }
     }
 }

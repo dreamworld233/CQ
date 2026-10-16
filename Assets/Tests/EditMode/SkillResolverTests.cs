@@ -98,6 +98,24 @@ public class SkillResolverTests
         Assert.IsTrue(result.Charges.All(c => c.Trigger == "hit"));
     }
 
+    [TestCase("snipe")]
+    [TestCase("heal")]
+    public void Target_Validation_Is_Independent_Of_Charge_And_Does_Not_Resolve(string mode)
+    {
+        var actor = U("actor", Team.Player);
+        var ally = U("ally", Team.Player, "back1");
+        var enemy = U("enemy", Team.Enemy);
+        var ctx = Ctx(actor, ally, enemy);
+        var skill = mode == "snipe" ? Attack("ult", "snipe") :
+            new SkillSpec { id = "heal", type = "ult", heal = new HealSpec { target = "single", amount = 20 } };
+        var target = mode == "snipe" ? enemy : ally;
+        Assert.IsFalse(SkillResolver.CanUse(skill, actor));
+        Assert.IsTrue(SkillResolver.IsValidTarget(skill, ctx, actor, target, new[] { actor, ally }, new[] { enemy }));
+        Assert.AreEqual(0, actor.Ult); Assert.AreEqual(100, target.Hp); Assert.IsEmpty(ctx.ActionResults);
+        target.Hp = 0;
+        Assert.IsFalse(SkillResolver.IsValidTarget(skill, ctx, actor, target, new[] { actor, ally }, new[] { enemy }));
+    }
+
     [Test]
     public void Ultimate_Not_Full_Does_Nothing()
     {

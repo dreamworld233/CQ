@@ -17,12 +17,6 @@ namespace CQ.Core.Battle
         Finished
     }
 
-    /// <summary>
-    /// 完整战斗编排器（T7 串联合一）。把所有 resolver 接成一个确定性回合闭环：
-    /// StartBattle → (打牌/终结技 输入Phase) → EndRound(速度混排+逐个结算+死亡+胜负+回合末衰减) → 下回合 或 结束。
-    /// 卡牌在输入Phase即时生效（打断/虚弱/降速/提速/护盾/攻增），只影响本回合。
-    /// 玩家正常行动自动普攻（最高有效嘲讽敌人），敌人按意图循环结算、被打断跳过并对可打断蓄力一并取消。
-    /// </summary>
     public sealed class BattleEngine
     {
         public const string CardSourceId = "player";
@@ -50,11 +44,29 @@ namespace CQ.Core.Battle
         {
             get
             {
+                if (Flow == BattleFlow.Resolving || IsFinished) return _lastOrder;
                 var alive = Ctx.Units.Where(u => !u.IsDead).ToList();
                 return SpeedSorter.Sort(alive, u => StatusResolver.EffectiveSpeedOfUnit(u, Ctx));
             }
         }
 
+        public Guid BattleId { get; } = Guid.NewGuid();
+        public ActionResult CurrentAction { get; private set; }
+        public bool IsActionOccupied => CurrentAction != null;
+        public bool CanPlayCards => InputOpen;
+        public int PendingUltimateCount => _pending.Count;
+
+        private sealed class UltimateRequest
+        {
+            public Unit Caster;
+            public SkillSpec Skill;
+            public string TargetId;
+            public int Reserved;
+        }
+
+        private readonly List<UltimateRequest> _pending = new List<UltimateRequest>();
+        private readonly HashSet<string> _requested = new HashSet<string>();
+        private UltimateRequest _executing;
         private readonly Dictionary<string, CharacterConfig> _chars;
         private readonly Dictionary<string, EnemyConfig> _enemyCfgs;
         private readonly Dictionary<string, CardConfig> _cards;
@@ -193,7 +205,8 @@ namespace CQ.Core.Battle
             Flow = BattleFlow.Input;
         }
 
-        private bool InputOpen => _started && !IsFinished && Flow == BattleFlow.Input;
+        private bool InputOpen => _started && !IsFinished && Flow == BattleFlow.Input &&
+            !IsActionOccupied && _pending.Count == 0;
 
         /// <summary>打出第 handIndex 张手牌，作用于 targetUnitId。效果即时生效。</summary>
         public bool PlayCard(int handIndex, string targetUnitId)
@@ -208,51 +221,128 @@ namespace CQ.Core.Battle
             return true;
         }
 
-        public bool UseUltimate(string charId, string targetUnitId = null)
+        public bool RequestUltimate(string charId, string targetUnitId = null)
         {
-            if (!InputOpen) return false;
+            if (!CanRequestUltimate(charId)) return false;
             var unit = Ctx.GetUnit(charId);
             var skill = UltimateOf(charId);
-            if (unit == null || unit.Team != Team.Player || skill == null) return false;
-            var result = SkillResolver.Resolve(skill, Ctx, unit, Ctx.GetUnit(targetUnitId), AlivePlayers(), AliveEnemies());
-            if (result == null) return false;
-            Record(result);
-            CheckWinner();
+            if (!SkillResolver.IsValidTarget(skill, Ctx, unit, Ctx.GetUnit(targetUnitId), AlivePlayers(), AliveEnemies()))
+                return false;
+            int reserved = unit.MaxUlt;
+            unit.GainUlt(-reserved);
+            _requested.Add(charId);
+            _pending.Add(new UltimateRequest { Caster = unit, Skill = skill, TargetId = targetUnitId, Reserved = reserved });
             return true;
         }
 
         public SkillSpec UltimateOf(string charId) =>
             _chars.TryGetValue(charId, out var cfg) ? cfg.skills?.Find(s => s.type == "ult") : null;
 
-        public bool CanUseUltimate(string charId) =>
-            InputOpen && SkillResolver.CanUse(UltimateOf(charId), Ctx.GetUnit(charId));
+        public bool CanRequestUltimate(string charId) =>
+            _started && !IsFinished && (Flow == BattleFlow.Input || Flow == BattleFlow.Resolving) &&
+            charId != null && !_requested.Contains(charId) && Ctx.GetUnit(charId)?.Team == Team.Player &&
+            SkillResolver.CanUse(UltimateOf(charId), Ctx.GetUnit(charId));
+
+        public bool HasUltimateRequest(string charId) => charId != null && _requested.Contains(charId);
+        public bool CanCancelUltimate(string charId) => _pending.Any(r => r.Caster.Id == charId);
+
+        public bool CancelUltimate(string charId)
+        {
+            var request = _pending.Find(r => r.Caster.Id == charId);
+            if (request == null) return false;
+            Refund(request);
+            _pending.Remove(request);
+            return true;
+        }
+
+        private void Refund(UltimateRequest request)
+        {
+            request.Caster.GainUlt(request.Reserved);
+            request.Reserved = 0;
+            _requested.Remove(request.Caster.Id);
+        }
+
+        private void CancelInvalidRequests()
+        {
+            for (int i = _pending.Count - 1; i >= 0; i--)
+            {
+                var request = _pending[i];
+                if (!IsFinished && SkillResolver.IsValidTarget(request.Skill, Ctx, request.Caster,
+                    Ctx.GetUnit(request.TargetId), AlivePlayers(), AliveEnemies())) continue;
+                Refund(request);
+                _pending.RemoveAt(i);
+            }
+        }
 
         private void CheckWinner()
         {
             _turns.CheckWinner();
             if (_turns.IsFinished) Flow = BattleFlow.Finished;
+            CancelInvalidRequests();
         }
 
-        /// <summary>结束输入，跑本回合闭环。返回本回合出手顺序（含排序时存活单位）。</summary>
-        public IReadOnlyList<Unit> EndRound()
+        public bool BeginActions()
         {
-            if (!InputOpen) return _lastOrder;
-            Flow = BattleFlow.Resolving;
-
+            if (!InputOpen) return false;
+            CheckWinner();
+            if (IsFinished) return false;
+            _lastOrder = _turns.BeginActions();
             _events.Clear();
-            _lastOrder = _turns.RunRound(ActUnit);
-            StatusResolver.RoundEndTick(Ctx);
+            Flow = BattleFlow.Resolving;
+            return true;
+        }
 
-            if (_turns.IsFinished)
+        public ActionResult Advance()
+        {
+            if (!_started || IsActionOccupied || IsFinished) return null;
+            CheckWinner();
+            if (IsFinished) return null;
+            while (_pending.Count > 0)
             {
-                Flow = BattleFlow.Finished;
+                var request = _pending[0];
+                _pending.RemoveAt(0);
+                var result = SkillResolver.ResolveReserved(request.Skill, Ctx, request.Caster,
+                    Ctx.GetUnit(request.TargetId), AlivePlayers(), AliveEnemies());
+                if (result == null) { Refund(request); continue; }
+                request.Reserved = 0;
+                _executing = request;
+                CurrentAction = result;
+                Record(result);
+                CheckWinner();
+                return result;
             }
-            else
+            if (Flow != BattleFlow.Resolving) return null;
+            Unit unit;
+            while ((unit = _turns.NextNormal()) != null)
             {
+                int count = Ctx.ActionResults.Count;
+                ActUnit(unit);
+                if (Ctx.ActionResults.Count == count) continue;
+                CurrentAction = Ctx.ActionResults[Ctx.ActionResults.Count - 1];
+                CheckWinner();
+                return CurrentAction;
+            }
+            CheckWinner();
+            if (!IsFinished)
+            {
+                _turns.CompleteRound();
+                StatusResolver.RoundEndTick(Ctx);
                 Deck.Draw(1);
                 Flow = BattleFlow.Input;
             }
-            return _lastOrder;
+            return null;
+        }
+
+        public bool Confirm(Guid battleId, long sequence)
+        {
+            if (battleId != BattleId || CurrentAction == null || CurrentAction.Sequence != sequence) return false;
+            CurrentAction = null;
+            if (_executing != null)
+            {
+                _requested.Remove(_executing.Caster.Id);
+                _executing = null;
+            }
+            return true;
         }
 
         private void ActUnit(Unit unit)

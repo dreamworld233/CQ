@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using CQ.Core.Battle;
@@ -16,6 +17,10 @@ namespace CQ.Runtime
     public class BattleController : MonoBehaviour
     {
         [SerializeField] private long seed = 12345;
+        [SerializeField, Min(0f)] private float actionDuration = 0.25f;
+        [SerializeField, Min(0f)] private float actionGap = 0.25f;
+        private Coroutine _driver;
+        private int _generation;
 
         [Header("阵型布局（Play 中可实时调，调好抄回 PositioningView 默认值）")]
         [SerializeField] private BattleLayout layout = new BattleLayout();
@@ -88,7 +93,7 @@ namespace CQ.Runtime
         private void BuildUi()
         {
             _ui = BattleUi.Build(transform);
-            _ui.OnEndRound = EndRoundAction;
+            _ui.OnEndRound = BeginActionsAction;
             _ui.OnRestart = () => NewBattle();
             _ui.OnNextLevel = NextLevelAction;
             _ui.OnRetry = () => NewBattle();
@@ -96,6 +101,14 @@ namespace CQ.Runtime
             _radial = RadialSkillMenu.Build(transform);
             _radial.Bind(_ui.CanvasRect, _cam);
             _radial.OnPick = OnRadialPicked;
+            _radial.OnCancel = () =>
+            {
+                if (_engine != null && _engine.CancelUltimate(_selectedActor))
+                {
+                    RefreshWorld();
+                    RefreshHud();
+                }
+            };
             _radial.Hide();
         }
 
@@ -174,8 +187,8 @@ namespace CQ.Runtime
                 // 待选目标的单体治疗：点友方 = 定目标，不能把选中角色顶掉
                 if (_pendingSkill != null && NeedsSingleAlly(_pendingSkill))
                 {
-                    TryUseUltimate(_selectedActor, _pendingSkill.id, unit.Id);
-                    return;   // TryUseUltimate 内部已刷选择态与 HUD
+                    TryRequestUltimate(_selectedActor, _pendingSkill.id, unit.Id);
+                    return;   // TryRequestUltimate 内部已刷选择态与 HUD
                 }
 
                 _selectedActor = unit.Id;
@@ -191,7 +204,7 @@ namespace CQ.Runtime
                 }
                 else
                 {
-                    TryUseUltimate(_selectedActor, _pendingSkill.id, unit.Id);
+                    TryRequestUltimate(_selectedActor, _pendingSkill.id, unit.Id);
                 }
             }
             RefreshSelection();
@@ -202,12 +215,14 @@ namespace CQ.Runtime
             if (!_views.TryGetValue(actorId, out var view)) return;
             var ult = _engine.UltimateOf(actorId);
             var skills = ult == null ? new List<SkillSpec>() : new List<SkillSpec> { ult };
-            _radial.Show(view.transform.position, skills, s => _engine.CanUseUltimate(actorId));
+            _radial.Show(view.transform.position, skills, s => _engine != null && _engine.CanRequestUltimate(actorId),
+                () => _engine != null && _engine.CanCancelUltimate(actorId),
+                () => _engine != null && _engine.HasUltimateRequest(actorId));
         }
 
         private void OnRadialPicked(SkillSpec s)
         {
-            if (s == null || string.IsNullOrEmpty(_selectedActor)) return;
+            if (s == null || string.IsNullOrEmpty(_selectedActor) || !_engine.CanRequestUltimate(_selectedActor)) return;
             if (NeedsTarget(s))
             {
                 _pendingSkill = s;
@@ -216,7 +231,7 @@ namespace CQ.Runtime
             }
             else
             {
-                TryUseUltimate(_selectedActor, s.id, null);
+                TryRequestUltimate(_selectedActor, s.id, null);
             }
         }
 
@@ -224,19 +239,19 @@ namespace CQ.Runtime
         private static bool NeedsSingleAlly(SkillSpec s) => s.heal != null && s.heal.target == "single";
         private static bool NeedsTarget(SkillSpec s) => NeedsSingleEnemy(s) || NeedsSingleAlly(s);
 
-        private void TryUseUltimate(string actorId, string skillId, string targetId)
+        private void TryRequestUltimate(string actorId, string skillId, string targetId)
         {
             _pendingSkill = null;
-            if (_engine.UseUltimate(actorId, targetId))
+            if (_engine.RequestUltimate(actorId, targetId))
             {
-                Log(UnitName(actorId) + " " + SkillName(actorId, skillId) + " → " + UnitName(targetId) + "（已释放）");
+                Log(UnitName(actorId) + " " + SkillName(actorId, skillId) + "（已排队）");
+                EnsureDriver();
             }
             else
             {
                 Log("终结技失败（充能/目标不符）");
             }
-            _radial.Hide();
-            DrainEngineEvents();
+            ShowRadial(actorId);
             RefreshWorld();
             RefreshSelection();
             RefreshHud();
@@ -244,8 +259,19 @@ namespace CQ.Runtime
 
         // ---------- 建局 ----------
 
+        private void StopDriver()
+        {
+            _generation++;
+            if (_driver != null) StopCoroutine(_driver);
+            _driver = null;
+        }
+
+        private void OnDestroy() => StopDriver();
+
         private void NewBattle()
         {
+            StopDriver();
+            _engine = null;
             _log.Clear();
             _logCursor = 0;
             _pendingSkill = null;
@@ -373,56 +399,93 @@ namespace CQ.Runtime
                         string tag = (u.Team == Team.Player ? "我 " : "敌 ") + u.Name + (u.IsDead ? "(亡)" : "");
                         return tag;
                     }));
-                if (_engine.IsFinished)
+                if (_engine.IsFinished && !_engine.IsActionOccupied)
                     winner = _engine.Winner == Team.Player ? "我方胜利" : "我方失败";
             }
             bool hasNext = HasNextLevel();
             _ui.Refresh(_engine != null ? _engine.Round : 1, order, winner, hasNext ? "下一关 → " + _levels[_levelIndex + 1].name : "", hasNext);
+            _ui.EndRoundButton.interactable = _engine != null && _engine.CanPlayCards;
             _ui.SetEvent(LogText());
         }
 
         // ---------- 指令 ----------
 
-        private void EndRoundAction()
+        private void BeginActionsAction()
         {
-            if (_engine == null || _engine.IsFinished) return;
-            _engine.EndRound();
-            _pendingSkill = null;
-            if (_radial != null) _radial.Hide();
+            if (_engine == null || !_engine.BeginActions()) return;
+            RefreshHud();
+            EnsureDriver();
+        }
+
+        private void EnsureDriver()
+        {
+            if (_driver == null && _engine != null) _driver = StartCoroutine(Drive(_engine, _generation));
+        }
+
+        private bool IsCurrent(BattleEngine engine, int generation) =>
+            generation == _generation && ReferenceEquals(engine, _engine);
+
+        private IEnumerator Drive(BattleEngine engine, int generation)
+        {
+            yield return null;
+            if (!IsCurrent(engine, generation)) yield break;
+            while (true)
+            {
+                var result = engine.Advance();
+                if (result == null) break;
+                RefreshWorld();
+                ConsumeAction(result);
+                RefreshSelection();
+                RefreshHud();
+                yield return new WaitForSeconds(Mathf.Max(0f, actionDuration));
+                if (!IsCurrent(engine, generation)) yield break;
+                while (_views.Values.Any(view => view != null && !view.FeedbackComplete))
+                {
+                    yield return null;
+                    if (!IsCurrent(engine, generation)) yield break;
+                }
+                yield return new WaitForSeconds(Mathf.Max(0f, actionGap));
+                if (!IsCurrent(engine, generation)) yield break;
+                engine.Confirm(engine.BattleId, result.Sequence);
+            }
+            if (!IsCurrent(engine, generation)) yield break;
+            _driver = null;
             RefreshWorld();
             RefreshSelection();
-            DrainEngineEvents();   // 逐条播报：谁 用什么 → 打谁 掉多少
             RefreshHud();
         }
 
-        /// <summary>把引擎新产生的结算事件排进左栏战报（已播报过的按游标跳过）。</summary>
-        private void DrainEngineEvents()
+        private void ConsumeAction(ActionResult result)
         {
-            if (_engine == null) return;
-            foreach (var result in _engine.ActionResults)
+            if (result.Sequence <= _logCursor) return;
+            bool any = false;
+            foreach (var change in result.UnitChanges)
             {
-                if (result.Sequence <= _logCursor) continue;
-                bool any = false;
-                foreach (var change in result.UnitChanges)
+                if (change.HpDelta == 0) continue;
+                any = true;
+                PushLog(FormatEvent(new BattleEvent { Kind = result.Kind, ActorId = result.ActorId,
+                    ActionId = result.ActionId, TargetId = change.UnitId, HpDelta = change.HpDelta,
+                    TargetDead = change.After.IsDead }));
+                if (_views.TryGetValue(change.UnitId, out var view))
                 {
-                    if (change.HpDelta == 0) continue;
-                    any = true;
-                    PushLog(FormatEvent(new BattleEvent { Kind = result.Kind, ActorId = result.ActorId,
-                        ActionId = result.ActionId, TargetId = change.UnitId, HpDelta = change.HpDelta,
-                        TargetDead = change.After.IsDead }));
-                    if (_views.TryGetValue(change.UnitId, out var view))
-                    {
-                        view.FloatText((change.HpDelta > 0 ? "+" : "") + change.HpDelta,
-                            change.HpDelta > 0 ? Color.green : Color.red, change.HpDelta);
-                        view.Flash(change.HpDelta);
-                    }
+                    view.FloatText((change.HpDelta > 0 ? "+" : "") + change.HpDelta,
+                        change.HpDelta > 0 ? Color.green : Color.red, change.HpDelta);
+                    view.Flash(change.HpDelta);
                 }
-                if (!any) PushLog(FormatEvent(new BattleEvent { Kind = result.Kind, ActorId = result.ActorId,
-                    ActionId = result.ActionId }));
-                foreach (var hit in result.Hits)
-                    if (hit.ShieldAbsorbed > 0) PushLog(UnitName(hit.TargetUnitId) + " 护盾吸收 " + hit.ShieldAbsorbed);
-                _logCursor = result.Sequence;
             }
+            if (!any) PushLog(FormatEvent(new BattleEvent { Kind = result.Kind, ActorId = result.ActorId,
+                ActionId = result.ActionId }));
+            foreach (var hit in result.Hits)
+            {
+                if (hit.ShieldAbsorbed <= 0) continue;
+                PushLog(UnitName(hit.TargetUnitId) + " 护盾吸收 " + hit.ShieldAbsorbed);
+                if (hit.HpDamage == 0 && _views.TryGetValue(hit.TargetUnitId, out var view))
+                {
+                    view.FloatText("护盾 " + hit.ShieldAbsorbed, Color.cyan);
+                    view.Flash(-1);
+                }
+            }
+            _logCursor = result.Sequence;
         }
 
         private string FormatEvent(BattleEvent ev)
@@ -471,7 +534,8 @@ namespace CQ.Runtime
         }
 
         private bool HasNextLevel() =>
-            _engine != null && _engine.IsFinished && _engine.Winner == Team.Player && _levelIndex + 1 < _levels.Count;
+            _engine != null && _engine.IsFinished && !_engine.IsActionOccupied &&
+            _engine.Winner == Team.Player && _levelIndex + 1 < _levels.Count;
 
         // ---------- 意图文本 ----------
 

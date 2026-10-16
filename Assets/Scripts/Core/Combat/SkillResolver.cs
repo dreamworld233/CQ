@@ -17,15 +17,31 @@ namespace CQ.Core.Combat
             return false;
         }
 
-        public static ActionResult Resolve(SkillSpec skill, CombatContext ctx, Unit caster, Unit target,
+        public static bool IsValidTarget(SkillSpec skill, CombatContext ctx, Unit caster, Unit target,
             IReadOnlyList<Unit> allies, IReadOnlyList<Unit> enemies)
         {
-            if (ctx == null || !CanUse(skill, caster) || !ReferenceEquals(ctx.GetUnit(caster.Id), caster)) return null;
-            // 先验目标，避免非法请求扣费或改变后续随机序列。
+            if (skill == null || ctx == null || caster == null || caster.IsDead ||
+                !ReferenceEquals(ctx.GetUnit(caster.Id), caster)) return false;
             if (skill.damage != null && skill.damage.target == "snipe" &&
-                (!Contains(enemies, target) || target.Team == caster.Team || !ReferenceEquals(ctx.GetUnit(target.Id), target))) return null;
+                (!Contains(enemies, target) || target.Team == caster.Team || !ReferenceEquals(ctx.GetUnit(target.Id), target))) return false;
             if (skill.heal != null && skill.heal.target == "single" &&
-                (!Contains(allies, target) || target.Team != caster.Team || !ReferenceEquals(ctx.GetUnit(target.Id), target))) return null;
+                (!Contains(allies, target) || target.Team != caster.Team || !ReferenceEquals(ctx.GetUnit(target.Id), target))) return false;
+            return true;
+        }
+
+        public static ActionResult Resolve(SkillSpec skill, CombatContext ctx, Unit caster, Unit target,
+            IReadOnlyList<Unit> allies, IReadOnlyList<Unit> enemies) =>
+            ResolveEffect(skill, ctx, caster, target, allies, enemies, false);
+
+        internal static ActionResult ResolveReserved(SkillSpec skill, CombatContext ctx, Unit caster, Unit target,
+            IReadOnlyList<Unit> allies, IReadOnlyList<Unit> enemies) =>
+            ResolveEffect(skill, ctx, caster, target, allies, enemies, true);
+
+        private static ActionResult ResolveEffect(SkillSpec skill, CombatContext ctx, Unit caster, Unit target,
+            IReadOnlyList<Unit> allies, IReadOnlyList<Unit> enemies, bool reserved)
+        {
+            if (!IsValidTarget(skill, ctx, caster, target, allies, enemies) ||
+                (!reserved && !CanUse(skill, caster))) return null;
             Unit damageTarget = target;
             if (skill.damage != null && skill.damage.target == "single")
             {
@@ -33,7 +49,7 @@ namespace CQ.Core.Combat
                 if (damageTarget == null) return null;
             }
             ctx.BeginAction(BattleEventKind.Skill, caster, skill.id, skill.type == "basic");
-            if (skill.type == "ult") caster.GainUlt(-caster.MaxUlt);
+            if (skill.type == "ult" && !reserved) caster.GainUlt(-caster.MaxUlt);
             if (skill.damage != null)
             {
                 if (skill.damage.target == "all")

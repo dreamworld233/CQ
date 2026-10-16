@@ -120,11 +120,11 @@ public class DeterminismTests
     private static void PlayRoundScripted(BattleEngine e)
     {
         var target = e.Enemies.FirstOrDefault(x => !x.IsDead);
-        if (target == null) { e.EndRound(); return; }
+        if (target == null) { BattleTestDriver.CompleteRound(e); return; }
         foreach (var p in e.Players)
             if (!p.IsDead)
-                e.UseUltimate(p.Id, target.Id);
-        e.EndRound();
+                BattleTestDriver.RequestAndPlay(e, p.Id, target.Id);
+        BattleTestDriver.CompleteRound(e);
     }
 
     [Test]

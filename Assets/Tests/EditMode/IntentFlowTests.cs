@@ -92,7 +92,7 @@ public class IntentFlowTests
         Assert.AreEqual("hit", eng.GetIntent(enemyId).CurrentIntentId);
         eng.Ctx.FormationOf(Team.Player).GetSlot("back1").AddModifier(60, 1);
 
-        eng.EndRound();
+        BattleTestDriver.CompleteRound(eng);
 
         Assert.AreEqual(100, eng.Ctx.GetUnit("front").Hp);
         Assert.AreEqual(100 - damage, eng.Ctx.GetUnit("back").Hp);
@@ -112,7 +112,7 @@ public class IntentFlowTests
         var eng = Make(7, new[] { Fighter("front", "front1"), Fighter("back", "back1") }, new[] { enemy });
         eng.StartBattle();
         eng.Ctx.GetUnit("front").TakeDamage(100);
-        eng.EndRound();
+        BattleTestDriver.CompleteRound(eng);
         var hit = eng.RoundEvents.Single(e => e.Kind == BattleEventKind.Intent && e.HpDelta < 0);
         Assert.AreEqual(eng.Enemies[0].Id, hit.ActorId);
         Assert.AreEqual("attack", hit.ActionId);
@@ -130,7 +130,7 @@ public class IntentFlowTests
         eng.StartBattle();
         eng.Ctx.GetUnit("dead").TakeDamage(100);
         eng.Ctx.FormationOf(Team.Player).GetSlot("back1").AddModifier(1000, 1);
-        eng.EndRound();
+        BattleTestDriver.CompleteRound(eng);
         var events = eng.RoundEvents.Where(e => e.Kind == BattleEventKind.Intent).ToList();
         Assert.AreEqual(2, events.Count);
         CollectionAssert.AreEquivalent(new[] { "front", "back" }, events.Select(e => e.TargetId));
@@ -170,11 +170,11 @@ public class IntentFlowTests
         string lordId = eng.Enemies[0].Id;
 
         Assert.AreEqual("charge", eng.GetIntent(lordId).CurrentIntentId, "第 1 回合亮蓄力");
-        eng.EndRound(); // 领主蓄力，意图前进
+        BattleTestDriver.CompleteRound(eng); // 领主蓄力，意图前进
 
         Assert.AreEqual("attack", eng.GetIntent(lordId).CurrentIntentId, "第 2 回合亮普攻");
         Assert.IsTrue(eng.PlayCard(0, lordId)); // 打断领主
-        eng.EndRound(); // 领主本回合不出手，意图不前移
+        BattleTestDriver.CompleteRound(eng); // 领主本回合不出手，意图不前移
 
         Assert.AreEqual("attack", eng.GetIntent(lordId).CurrentIntentId, "下回合重新亮同一意图");
     }
@@ -186,7 +186,7 @@ public class IntentFlowTests
         var eng = Make(1, new[] { Sword() }, new[] { Bag() },
             Card("weaken", "weaken", percent: 25), Card("shield", "shield", amount: 20));
         eng.StartBattle();
-        eng.EndRound(); // 第 1 回合结束，已抽 2 张（weaken + shield）
+        BattleTestDriver.CompleteRound(eng); // 第 1 回合结束，已抽 2 张（weaken + shield）
 
         Assert.AreEqual(2, eng.Hand.Count, "两回合各抽 1，攒成 2 张手牌");
 

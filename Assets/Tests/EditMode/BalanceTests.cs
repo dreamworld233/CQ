@@ -33,7 +33,7 @@ public class BalanceTests
         var eng = BuildLevel(1, 7);
         eng.StartBattle();
 
-        for (int i = 0; i < 60 && !eng.IsFinished; i++) eng.EndRound();
+        for (int i = 0; i < 60 && !eng.IsFinished; i++) BattleTestDriver.CompleteRound(eng);
 
         Assert.IsTrue(eng.IsFinished, "第 1 关应能在 60 回合内结束");
         Assert.AreEqual(Team.Player, eng.Winner, "第 1 关纯普攻应可胜");
@@ -45,7 +45,7 @@ public class BalanceTests
         var eng = BuildLevel(1, 7);
         eng.StartBattle();
 
-        var order = eng.EndRound();
+        var order = BattleTestDriver.CompleteRound(eng);
 
         int firstP = -1, lastP = -1, firstE = -1, lastE = -1;
         for (int i = 0; i < order.Count; i++)
@@ -113,7 +113,7 @@ public class BalanceTests
             eng.StartBattle();
 
             int guard = 0;
-            while (!eng.IsFinished && guard < 200) { eng.EndRound(); guard++; }
+            while (!eng.IsFinished && guard < 200) { BattleTestDriver.CompleteRound(eng); guard++; }
 
             Assert.IsTrue(eng.IsFinished, "第 " + id + " 关应在 200 回合内结束（无死循环）");
         }

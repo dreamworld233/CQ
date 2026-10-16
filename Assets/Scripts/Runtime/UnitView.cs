@@ -68,6 +68,8 @@ namespace CQ.Runtime
         private Vector3 _home;
 
         public string UnitId { get; private set; }
+        public bool FeedbackComplete => _flashT <= 0f && _shakeT <= 0f &&
+            GetComponentInChildren<FloatingText>() == null;
 
         public void Setup(Unit unit, Color teamColor)
         {
