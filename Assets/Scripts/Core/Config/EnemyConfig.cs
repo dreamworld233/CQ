@@ -7,12 +7,12 @@ namespace CQ.Core.Config
     public class IntentConfig
     {
         public string id;         // 引用键
-        public string type;       // attack | charge | attackUp | multi
+        public string type;       // attack | charge | attackUp | multi | debuff
         public string target;     // single | all
         public int damage;
         public int hits;          // multi 连击次数
-        public int buffPercent;   // attackUp 攻增百分比
-        public int buffDuration;  // attackUp 持续回合（蓄力强化：跨到下一击）
+        public int buffPercent;   // attackUp 或 attack/multi 伤害结束后的自身攻增
+        public int buffDuration;  // 攻增持续回合（round，包含施加当轮）
         public int nextDamage;    // charge 下一回合伤害
         public bool interruptible;
         public string debuffType;   // debuff 状态 id（weaken/slow）

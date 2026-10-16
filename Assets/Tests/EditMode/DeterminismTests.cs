@@ -107,7 +107,8 @@ public class DeterminismTests
               .Append(ev.HpDelta).Append(':').Append(ev.TargetDead);
         foreach (var action in e.ActionResults)
         {
-            sb.Append(" action=").Append(action.Sequence).Append(':').Append(action.ActorId).Append(':').Append(action.ActionId);
+            sb.Append(" action=").Append(action.Sequence).Append(':').Append(action.ActorId).Append(':').Append(action.ActionId)
+                .Append(':').Append(action.TargetUnitId).Append(':').Append(action.TargetTeam).Append(':').Append(action.TargetSlotId);
             foreach (var hit in action.Hits) sb.Append(" hit=").Append(hit.TargetUnitId).Append(':').Append(hit.HpDamage).Append(':').Append(hit.ShieldAbsorbed);
             foreach (var charge in action.Charges) sb.Append(" charge=").Append(charge.UnitId).Append(':').Append(charge.After);
         }
@@ -125,6 +126,47 @@ public class DeterminismTests
             if (!p.IsDead)
                 BattleTestDriver.RequestAndPlay(e, p.Id);
         BattleTestDriver.CompleteRound(e);
+    }
+
+    [Test]
+    public void Cards_CompoundIntents_And_RepeatedPreviews_PreserveDeterminism()
+    {
+        BattleEngine Build()
+        {
+            var lord = Lord();
+            lord.intents[1].buffPercent = 20;
+            lord.intents[1].buffDuration = 2;
+            lord.intents[1].debuffType = "weaken";
+            lord.intents[1].debuffPercent = 20;
+            lord.intents[1].debuffDuration = 1;
+            var taunt = Card("taunt", "tauntUp", amount: 100);
+            taunt.effect.duration = 2;
+            return Make(73, new List<CharacterConfig> { Char("a", 250, 10, 12), Char("b", 250, 6, 8) },
+                new List<EnemyConfig> { lord, Claw() }, new List<CardConfig> { taunt, Card("shield", "shield", amount: 20) });
+        }
+        var a = Build();
+        var b = Build();
+        a.StartBattle(); b.StartBattle();
+        for (int round = 0; round < 12 && !a.IsFinished; round++)
+        {
+            foreach (var enemy in a.Enemies)
+                for (int query = 0; query < 5; query++) a.GetIntentPreview(enemy.Id);
+            foreach (var engine in new[] { a, b })
+            {
+                while (engine.Hand.Count > 0)
+                {
+                    bool played = engine.Hand[0] == "taunt"
+                        ? engine.PlaySlotCard(0, Team.Player, "back3")
+                        : engine.PlayCard(0, engine.Players.First(u => !u.IsDead).Id);
+                    Assert.IsTrue(played);
+                }
+                PlayRoundScripted(engine);
+            }
+            Assert.AreEqual(Snap(a), Snap(b));
+            foreach (var team in new[] { Team.Player, Team.Enemy })
+                foreach (var slot in a.Ctx.FormationOf(team).Slots)
+                    Assert.AreEqual(slot.TauntModifier, b.Ctx.FormationOf(team).GetSlot(slot.Id).TauntModifier);
+        }
     }
 
     [Test]

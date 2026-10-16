@@ -697,6 +697,189 @@ public class BattleEngineTests
 
         Assert.AreEqual(50, eng.Ctx.GetUnit("buddy").Hp, "治疗回 30→50");
     }
+    private static CardConfig Card(string type) => new CardConfig
+    {
+        id = type, name = type, count = 1,
+        effect = new CardEffectSpec { type = type, percent = 25, amount = 40, duration = 2 }
+    };
+
+    // Every refused command must preserve the deck, observable events and action sequence.
+    private static void RefusesWithoutMutation(BattleEngine eng, System.Action command)
+    {
+        var hand = eng.Hand.ToArray();
+        int draw = eng.Deck.DrawPileCount, discard = eng.Deck.DiscardPileCount;
+        var results = eng.ActionResults.ToArray();
+        var events = eng.RoundEvents.ToArray();
+        var current = eng.CurrentAction;
+        string State() => string.Join(";", eng.Ctx.Units.Select(u =>
+            u.Id + ":" + u.Hp + ":" + u.Ult + ":" + eng.Ctx.GetHaste(u.Id) + ":" +
+            eng.Ctx.EffectiveTaunt(u) + ":" + string.Join(",", eng.Ctx.GetStatuses(u.Id).Select(s =>
+                s.Type + "/" + s.Duration + "/" + s.Percent + "/" + s.Amount))));
+        string before = State();
+        command();
+        CollectionAssert.AreEqual(hand, eng.Hand);
+        Assert.AreEqual(draw, eng.Deck.DrawPileCount);
+        Assert.AreEqual(discard, eng.Deck.DiscardPileCount);
+        CollectionAssert.AreEqual(results, eng.ActionResults);
+        CollectionAssert.AreEqual(events, eng.RoundEvents);
+        Assert.AreSame(current, eng.CurrentAction);
+        Assert.AreEqual(before, State());
+    }
+
+    [TestCase("interrupt", Team.Enemy)]
+    [TestCase("weaken", Team.Enemy)]
+    [TestCase("slow", Team.Enemy)]
+    [TestCase("haste", Team.Player)]
+    [TestCase("shield", Team.Player)]
+    [TestCase("attackUp", Team.Player)]
+    public void Unit_Cards_Validate_Before_Discard_And_Record_Only_Success(string type, Team targetTeam)
+    {
+        var eng = Make(7, new[] { C("a", 100, 10, 1), C("b", 100, 9, 1) },
+            new[] { E("foe", 1000, 1, 1), E("other", 1000, 1, 1) }, Card(type));
+        eng.StartBattle();
+        var valid = targetTeam == Team.Player ? eng.Players[0] : eng.Enemies[0];
+        var dead = targetTeam == Team.Player ? eng.Players[1] : eng.Enemies[1];
+        var wrong = targetTeam == Team.Player ? eng.Enemies[0] : eng.Players[0];
+        dead.TakeDamage(dead.MaxHp);
+        RefusesWithoutMutation(eng, () =>
+        {
+            foreach (int index in new[] { -1, eng.Hand.Count, int.MaxValue })
+            {
+                Assert.IsFalse(eng.CanPlayCard(index, valid.Id));
+                Assert.IsFalse(eng.PlayCard(index, valid.Id));
+            }
+            foreach (var id in new[] { null, "", "missing", wrong.Id, dead.Id })
+            {
+                Assert.IsFalse(eng.CanPlayCard(0, id));
+                Assert.IsFalse(eng.PlayCard(0, id));
+            }
+            foreach (var team in new[] { Team.Player, Team.Enemy })
+            {
+                Assert.IsFalse(eng.CanPlaySlotCard(0, team, "front1"));
+                Assert.IsFalse(eng.PlaySlotCard(0, team, "front1"));
+            }
+        });
+        Assert.IsTrue(eng.CanPlayCard(0, valid.Id));
+        Assert.IsTrue(eng.PlayCard(0, valid.Id));
+        Assert.IsEmpty(eng.Hand);
+        Assert.AreEqual(1, eng.Deck.DiscardPileCount);
+        var result = eng.ActionResults.Single();
+        Assert.AreEqual(1L, result.Sequence, "拒绝出牌不能消耗事件序号");
+        Assert.AreEqual(BattleEventKind.Card, result.Kind);
+        Assert.AreEqual(type, result.ActionId);
+        Assert.IsNull(result.TargetTeam);
+        Assert.IsNull(result.TargetSlotId);
+        Assert.AreEqual(1, eng.RoundEvents.Count);
+    }
+
+    [TestCase("tauntUp")]
+    [TestCase("tauntDown")]
+    public void Slot_Cards_Reject_Invalid_Indices_Teams_Slots_And_Unit_Entry(string type)
+    {
+        var eng = Make(7, new[] { C("a", 100, 10, 1) }, new[] { E("foe", 1000, 1, 1) }, Card(type));
+        eng.StartBattle();
+        RefusesWithoutMutation(eng, () =>
+        {
+            foreach (int index in new[] { -1, eng.Hand.Count, int.MaxValue })
+            {
+                Assert.IsFalse(eng.CanPlaySlotCard(index, Team.Player, "front1"));
+                Assert.IsFalse(eng.PlaySlotCard(index, Team.Player, "front1"));
+            }
+            foreach (var team in new[] { (Team)(-1), (Team)2, (Team)int.MaxValue })
+            {
+                Assert.IsFalse(eng.CanPlaySlotCard(0, team, "front1"));
+                Assert.IsFalse(eng.PlaySlotCard(0, team, "front1"));
+            }
+            foreach (var team in new[] { Team.Player, Team.Enemy })
+                foreach (var slot in new[] { null, "", "front3", "back4", "Front1", "enemy/front1" })
+                {
+                    Assert.IsFalse(eng.CanPlaySlotCard(0, team, slot));
+                    Assert.IsFalse(eng.PlaySlotCard(0, team, slot));
+                }
+            foreach (var id in new[] { "a", "foe_0", null })
+            {
+                Assert.IsFalse(eng.CanPlayCard(0, id));
+                Assert.IsFalse(eng.PlayCard(0, id));
+            }
+        });
+        Assert.IsTrue(eng.PlaySlotCard(0, Team.Enemy, "back3"));
+        Assert.AreEqual(1L, eng.ActionResults.Single().Sequence);
+        Assert.AreEqual(Team.Enemy, eng.ActionResults.Single().TargetTeam);
+        Assert.AreEqual("back3", eng.ActionResults.Single().TargetSlotId);
+    }
+
+    [TestCase("setup")]
+    [TestCase("queued")]
+    [TestCase("occupied")]
+    [TestCase("resolving")]
+    [TestCase("finished")]
+    public void Both_Card_Entrypoints_Require_Idle_Strategy_Window(string state)
+    {
+        foreach (var type in new[] { "interrupt", "tauntUp" })
+        {
+            var eng = Make(7, new[] { C("a", 100, 10, 1) }, new[] { E("foe", 1000, 1, 1) }, Card(type));
+            if (state == "setup") eng.Deck.Draw(1);
+            else eng.StartBattle();
+            if (state == "queued" || state == "occupied")
+            {
+                eng.Players[0].GainUlt(3);
+                Assert.IsTrue(eng.RequestUltimate("a"));
+                if (state == "occupied") Assert.IsNotNull(eng.Advance());
+            }
+            if (state == "resolving") Assert.IsTrue(eng.BeginActions());
+            if (state == "finished")
+            {
+                eng.Enemies[0].TakeDamage(9999);
+                Assert.IsFalse(eng.BeginActions());
+                Assert.IsTrue(eng.IsFinished);
+            }
+            RefusesWithoutMutation(eng, () =>
+            {
+                Assert.IsFalse(eng.CanPlayCards);
+                Assert.IsFalse(eng.CanPlayCard(0, "foe_0"));
+                Assert.IsFalse(eng.PlayCard(0, "foe_0"));
+                Assert.IsFalse(eng.CanPlaySlotCard(0, Team.Player, "back3"));
+                Assert.IsFalse(eng.PlaySlotCard(0, Team.Player, "back3"));
+            });
+            if (state == "finished") continue;
+            if (state == "setup") eng.StartBattle();
+            else BattleTestDriver.Drain(eng);
+            Assert.IsTrue(eng.CanPlayCards);
+            long previous = eng.ActionResults.LastOrDefault()?.Sequence ?? 0;
+            Assert.IsTrue(type == "interrupt" ? eng.PlayCard(0, "foe_0") : eng.PlaySlotCard(0, Team.Player, "back3"));
+            Assert.AreEqual(previous + 1, eng.ActionResults.Last().Sequence);
+        }
+    }
+
+    [TestCase(Team.Player, "tauntUp")]
+    [TestCase(Team.Enemy, "tauntUp")]
+    [TestCase(Team.Player, "tauntDown")]
+    [TestCase(Team.Enemy, "tauntDown")]
+    public void Slot_Cards_Accept_All_Five_Slots_Including_Empty_And_Record_Address(Team team, string type)
+    {
+        foreach (var slotId in SlotIds)
+        {
+            var eng = Make(7, new[] { C("a", 100, 10, 1) }, new[] { E("foe", 1000, 1, 1) }, Card(type));
+            eng.StartBattle();
+            var slot = eng.Ctx.FormationOf(team).GetSlot(slotId);
+            var occupant = slot.Occupant;
+            Assert.IsTrue(eng.CanPlaySlotCard(0, team, slotId));
+            Assert.IsTrue(eng.PlaySlotCard(0, team, slotId));
+            Assert.AreSame(occupant, slot.Occupant);
+            Assert.AreEqual(occupant == null ? 0 : 100 + (type == "tauntUp" ? 40 : -40), slot.EffectiveTaunt);
+            var result = eng.ActionResults.Single();
+            Assert.AreEqual(team, result.TargetTeam);
+            Assert.AreEqual(slotId, result.TargetSlotId);
+            Assert.AreEqual(type, result.ActionId);
+            Assert.AreEqual(BattleEventKind.Card, result.Kind);
+            Assert.AreEqual(1L, result.Sequence);
+            Assert.AreEqual(1, eng.Deck.DiscardPileCount);
+            Assert.IsEmpty(eng.Hand);
+            Assert.IsEmpty(result.Hits);
+            Assert.IsNull(eng.CurrentAction, "卡牌即时生效，不占动作播放锁");
+        }
+    }
+
     private static void AssertFormation(BattleEngine eng)
     {
         foreach (var team in new[] { Team.Player, Team.Enemy })

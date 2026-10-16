@@ -17,13 +17,21 @@ namespace CQ.Core.Combat
         public string Row => Formation.RowOf(Id);
         public int BaseTaunt { get; }
         public Unit Occupant { get; internal set; }
+        public long TauntModifier
+        {
+            get
+            {
+                long value = 0;
+                foreach (var modifier in _modifiers) value += modifier.Delta;
+                return value;
+            }
+        }
         public int EffectiveTaunt
         {
             get
             {
                 if (Occupant == null || Occupant.IsDead) return 0;
-                long value = BaseTaunt;
-                foreach (var modifier in _modifiers) value += modifier.Delta;
+                long value = BaseTaunt + TauntModifier;
                 return (int)Math.Max(0L, Math.Min(int.MaxValue, value));
             }
         }

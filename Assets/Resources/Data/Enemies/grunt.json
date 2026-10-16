@@ -6,7 +6,7 @@
   "intentSequence": ["basic", "attackUp", "debuff"],
   "intents": [
     { "id": "basic", "type": "attack", "target": "single", "damage": 10 },
-    { "id": "attackUp", "type": "attackUp", "buffPercent": 25, "buffDuration": 2 },
-    { "id": "debuff", "type": "debuff", "target": "single", "debuffType": "weaken", "debuffPercent": 25, "debuffDuration": 2 }
+    { "id": "attackUp", "type": "attack", "target": "single", "damage": 6, "buffPercent": 25, "buffDuration": 2 },
+    { "id": "debuff", "type": "attack", "target": "single", "damage": 6, "debuffType": "weaken", "debuffPercent": 25, "debuffDuration": 2 }
   ]
 }

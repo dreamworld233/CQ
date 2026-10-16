@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using CQ.Core.Battle;
+using CQ.Core.Cards;
 using CQ.Core.Combat;
 using CQ.Core.Config;
 using UnityEngine;
@@ -31,6 +32,9 @@ namespace CQ.Runtime
         private BattleEngine _engine;
         private readonly Dictionary<string, UnitView> _views = new Dictionary<string, UnitView>();
         private string _selectedActor;
+        private int _selectedCard = -1;
+        private BattleFlow _cardSelectionFlow;
+        private readonly Dictionary<string, TMPro.TextMeshPro> _slotLabels = new Dictionary<string, TMPro.TextMeshPro>();
         private readonly List<string> _log = new List<string>();   // 左栏战报（逐条伤害/治疗）
         private long _logCursor;                                    // 已播报的引擎事件下标
         private Transform _worldRoot;
@@ -97,6 +101,8 @@ namespace CQ.Runtime
             _ui.OnRestart = () => NewBattle();
             _ui.OnNextLevel = NextLevelAction;
             _ui.OnRetry = () => NewBattle();
+            _ui.OnSelectCard = SelectCard;
+            _ui.OnCancelCard = () => { ClearCardSelection(); RefreshHud(); };
         }
 
         // ---------- 点选输入 ----------
@@ -130,6 +136,31 @@ namespace CQ.Runtime
 
             if (overUi) return;
 
+            // Card targeting owns world input. In particular, never fall through to an ultimate or move.
+            if (_selectedCard >= 0)
+            {
+                if (!_engine.CanPlayCards) { ClearCardSelection(); RefreshHud(); return; }
+                if (SelectedCardIsSlotEffect())
+                {
+                    foreach (Team team in new[] { Team.Player, Team.Enemy })
+                        foreach (var slot in _engine.Ctx.FormationOf(team).Slots)
+                        {
+                            if (!SlotContainsPoint(team, slot.Id, point)) continue;
+                            if (_engine.CanPlaySlotCard(_selectedCard, team, slot.Id) &&
+                                _engine.PlaySlotCard(_selectedCard, team, slot.Id)) CardPlayed();
+                            return;
+                        }
+                    return;
+                }
+                if (hit != null)
+                {
+                    var target = hit.GetComponent<UnitView>();
+                    if (target != null && _engine.CanPlayCard(_selectedCard, target.UnitId) &&
+                        _engine.PlayCard(_selectedCard, target.UnitId)) CardPlayed();
+                }
+                return;
+            }
+
             // Setup slot discs sit above the unit collider, with their own exact hit area.
             if (_engine.Flow == BattleFlow.Setup && _selectedActor != null)
             {
@@ -154,6 +185,57 @@ namespace CQ.Runtime
             var uv = hit.GetComponent<UnitView>();
             if (uv == null) return;
             OnUnitTapped(_engine.Ctx.GetUnit(uv.UnitId));
+        }
+
+        private bool SlotContainsPoint(Team team, string slotId, Vector2 point)
+        {
+            var center = PositioningView.Position(team, slotId, layout) + Vector3.up * 0.86f;
+            var delta = point - (Vector2)center;
+            return delta.x * delta.x / (0.48f * 0.48f) + delta.y * delta.y / (0.23f * 0.23f) <= 1f;
+        }
+
+        private bool SelectedCardIsSlotEffect() => _engine != null && _selectedCard >= 0 &&
+            _selectedCard < _engine.Hand.Count &&
+            CardEffectResolver.IsSlotEffect(_engine.GetCard(_engine.Hand[_selectedCard])?.effect);
+
+        private void SelectCard(int index)
+        {
+            if (_engine == null || !_engine.CanPlayCards || index < 0 || index >= _engine.Hand.Count) return;
+            if (_selectedCard == index) ClearCardSelection();
+            else
+            {
+                _selectedCard = index;
+                _cardSelectionFlow = _engine.Flow;
+                _ui.SetCardTargeting(true);
+                RefreshSelection();
+            }
+            RefreshHud();
+        }
+
+        private void ClearCardSelection()
+        {
+            _selectedCard = -1;
+            if (_ui != null) _ui.SetCardTargeting(false);
+            RefreshSelection();
+        }
+
+        private void CardPlayed()
+        {
+            ClearCardSelection();
+            // Instant card results are appended, not driven or Confirm'ed as occupied actions.
+            var results = _engine.ActionResults;
+            if (results.Count > 0) ConsumeAction(results[results.Count - 1]);
+            RefreshWorld();
+            RefreshSelection();
+            RefreshHud();
+        }
+
+        private string CardTargetHint()
+        {
+            if (SelectedCardIsSlotEffect()) return "点双方圆盘：任意格（含空格）";
+            var effect = _engine.GetCard(_engine.Hand[_selectedCard])?.effect;
+            return effect != null && (effect.type == "interrupt" || effect.type == "weaken" || effect.type == "slow")
+                ? "点青色圈存活敌人；取消不影响终结技" : "点青色圈存活我方；取消不影响终结技";
         }
 
         /// <summary>取离点击点最近、且带 UnitView 的碰撞体。多个命中时按到点击点的距离决胜。</summary>
@@ -181,6 +263,7 @@ namespace CQ.Runtime
 
         private void OnUnitTapped(Unit unit)
         {
+            if (_selectedCard >= 0) return;
             if (unit == null || unit.IsDead || unit.Team != Team.Player || _engine.IsFinished) return;
             if (_engine.Flow == BattleFlow.Setup)
             {
@@ -194,7 +277,9 @@ namespace CQ.Runtime
 
         private void TryRequestUltimate(string actorId)
         {
-            if (_engine == null || !_engine.RequestUltimate(actorId)) return;
+            if (_engine == null || _selectedCard >= 0) return;
+            ClearCardSelection();
+            if (!_engine.RequestUltimate(actorId)) return;
             Log(UnitName(actorId) + " 终结技（已排队）");
             EnsureDriver();
             RefreshWorld();
@@ -229,6 +314,8 @@ namespace CQ.Runtime
         private void NewBattle()
         {
             StopDriver();
+            ClearCardSelection();
+            _ui.RefreshHand(null, -1, "");
             SaveFormation();
             _engine = null;
             _ui.ClearUltimateBindings();
@@ -284,6 +371,7 @@ namespace CQ.Runtime
         {
             if (_worldRoot != null) Destroy(_worldRoot.gameObject);
             _views.Clear();
+            _slotLabels.Clear();
             _worldRoot = new GameObject("BattleWorld").transform;
             _worldRoot.SetParent(transform, false);
 
@@ -300,6 +388,12 @@ namespace CQ.Runtime
                     sr.sprite = UiKit.CircleSprite();
                     sr.color = team == Team.Player ? new Color(0.3f, 0.8f, 1f, 0.65f) : new Color(1f, 0.4f, 0.3f, 0.5f);
                     sr.sortingOrder = 1;
+                    var label = TmpKit.MakeWorldText(_slotRoot, team + "_" + slot.Id + "_Target",
+                        go.transform.position, UiKit.Font, 0.19f, Color.white, 65,
+                        TMPro.FontStyles.Normal, "格子");
+                    TmpKit.SetOutline(label, Color.black, 0.22f);
+                    label.gameObject.SetActive(false);
+                    _slotLabels[team + ":" + slot.Id] = label;
                 }
             foreach (var p in _engine.Players) SpawnUnit(p);
             foreach (var e in _engine.Enemies) SpawnUnit(e);
@@ -333,8 +427,9 @@ namespace CQ.Runtime
             foreach (var u in _engine.Ctx.Units)
             {
                 if (!_views.TryGetValue(u.Id, out var v)) continue;
-                IntentConfig it = (u.Team == Team.Enemy && !u.IsDead && _engine.Flow != BattleFlow.Setup) ? _engine.CurrentIntentOf(u.Id) : null;
-                v.Refresh(u, it != null ? IntentText(it) : "", it != null ? it.type : "");
+                var preview = u.Team == Team.Enemy && !u.IsDead && _engine.Flow != BattleFlow.Setup
+                    ? _engine.GetIntentPreview(u.Id) : null;
+                v.Refresh(u, preview != null ? IntentPreviewText(preview) : "", preview?.Type ?? "", UnitStatusText(u));
                 v.SetAppearance(UnitColor(u, u.IsDead), u.IsDead);
             }
         }
@@ -342,14 +437,31 @@ namespace CQ.Runtime
         private void RefreshSelection()
         {
             if (_engine == null) return;
+            bool slotTargeting = SelectedCardIsSlotEffect() && _engine.CanPlayCards;
+            if (_slotRoot != null) _slotRoot.gameObject.SetActive(_engine.Flow == BattleFlow.Setup || slotTargeting);
             foreach (var u in _engine.Ctx.Units)
                 if (_views.TryGetValue(u.Id, out var view))
-                    view.SetHighlight(_engine.Flow == BattleFlow.Setup && u.Id == _selectedActor ? 1 : 0);
+                    view.SetHighlight(_selectedCard >= 0 && !slotTargeting && _engine.CanPlayCard(_selectedCard, u.Id) ? 2 :
+                        _engine.Flow == BattleFlow.Setup && u.Id == _selectedActor ? 1 : 0);
+            foreach (Team team in new[] { Team.Player, Team.Enemy })
+                foreach (var slot in _engine.Ctx.FormationOf(team).Slots)
+                {
+                    if (!_slotLabels.TryGetValue(team + ":" + slot.Id, out var label)) continue;
+                    label.gameObject.SetActive(slotTargeting);
+                    if (!slotTargeting) continue;
+                    string occupant = slot.Occupant == null ? "空格" : slot.Occupant.IsDead ? "阵亡" : slot.Occupant.Name;
+                    label.text = (team == Team.Player ? "我方 " : "敌方 ") + SlotLabel(slot.Id) + " " + occupant +
+                        "\n嘲讽 " + slot.EffectiveTaunt + " 修正 " + (slot.TauntModifier >= 0 ? "+" : "") + slot.TauntModifier;
+                    TmpKit.FitWorldHeight(label, 0.34f);
+                }
         }
 
         private void RefreshHud()
         {
             if (_ui == null) return;
+            if (_selectedCard >= 0 && (_engine == null || !_engine.CanPlayCards ||
+                _engine.Flow != _cardSelectionFlow || _selectedCard >= _engine.Hand.Count)) ClearCardSelection();
+            _ui.RefreshHand(_engine, _selectedCard, _selectedCard >= 0 ? CardTargetHint() : "");
             string order = "";
             string winner = "";
             if (_engine != null)
@@ -378,6 +490,7 @@ namespace CQ.Runtime
         private void BeginActionsAction()
         {
             if (_engine == null) return;
+            ClearCardSelection();
             if (_engine.Flow == BattleFlow.Setup)
             {
                 SaveFormation();
@@ -435,7 +548,16 @@ namespace CQ.Runtime
         private void ConsumeAction(ActionResult result)
         {
             if (result.Sequence <= _logCursor) return;
-            bool any = false;
+            bool any = result.Kind == BattleEventKind.Card;
+            if (any)
+            {
+                string target = result.TargetTeam.HasValue && !string.IsNullOrEmpty(result.TargetSlotId)
+                    ? (result.TargetTeam.Value == Team.Player ? "我方 " : "敌方 ") +
+                        SlotLabel(result.TargetSlotId) + "（" + result.TargetSlotId + "）"
+                    : UnitName(result.TargetUnitId);
+                var card = _engine.GetCard(result.ActionId);
+                PushLog("卡〔" + (card != null ? card.name : result.ActionId) + "〕 → " + target);
+            }
             foreach (var change in result.UnitChanges)
             {
                 if (change.HpDelta == 0) continue;
@@ -516,25 +638,52 @@ namespace CQ.Runtime
 
         // ---------- 意图文本 ----------
 
-        private static string IntentText(IntentConfig it)
+        private string UnitStatusText(Unit unit)
         {
-            if (it == null) return "";
-            switch (it.type)
+            if (unit.IsDead) return "";
+            var tags = new List<string>();
+            foreach (var status in _engine.Ctx.GetStatuses(unit.Id))
             {
-                case "attack":
-                    return it.target == "all" ? "全体 -" + it.damage : "单体 -" + it.damage;
-                case "multi":
-                    return "单体 -" + (it.damage * it.hits);
-                case "charge":
-                    return "蓄 单体 -" + it.nextDamage;
-                case "attackUp":
-                    return "↑";
-                case "debuff":
-                    return "↓";
-                default:
-                    return it.type;
+                switch (status.Type)
+                {
+                    case StatusType.Shield: tags.Add("盾" + status.Amount); break;
+                    case StatusType.AttackUp: tags.Add("攻+" + status.Percent + "%"); break;
+                    case StatusType.Weaken: tags.Add("弱" + status.Percent + "%"); break;
+                    case StatusType.Slow: tags.Add("慢" + status.Percent + "%"); break;
+                    case StatusType.Interrupt: tags.Add("打断"); break;
+                }
             }
+            int haste = _engine.Ctx.GetHaste(unit.Id);
+            if (haste > 0) tags.Add("急" + haste + "%");
+            return string.Join(" ", tags);
         }
+
+        private static string IntentPreviewText(EnemyIntentPreview preview)
+        {
+            var lines = new List<string>();
+            if (preview.PendingRelease != null) lines.Add("蓄放 " + IntentStepText(preview.PendingRelease));
+            // Displayed numbers are source-modified attack power, not target HP loss.
+            if (preview.Current != null)
+                lines.Add((preview.PendingRelease != null ? "续 " : "") + IntentStepText(preview.Current));
+            if (lines.Count > 0) lines.Add("伤害为盾前值");
+            return string.Join("\n", lines);
+        }
+
+        // Numbers come from the Core source-modified, pre-shield preview, never re-derived here.
+        private static string IntentStepText(EnemyIntentPreviewStep step)
+        {
+            var parts = new List<string>();
+            if (step.Suppressed) parts.Add("取消");
+            if (step.Hits > 0)
+                parts.Add((step.Target == "all" ? "全" : "单") + step.DamagePerHit + "x" + step.Hits);
+            if (step.Type == "charge")
+                parts.Add("蓄 下轮" + step.NextRoundDamage + (step.Interruptible ? " 可断" : " 不可断"));
+            if (step.BuffPercent > 0) parts.Add("攻+" + step.BuffPercent + "%");
+            if (!string.IsNullOrEmpty(step.DebuffType))
+                parts.Add((step.DebuffType == "weaken" ? "虚弱" : "减速") + step.DebuffPercent + "%");
+            return string.Join(" ", parts);
+        }
+
 
         // ---------- 辅助 ----------
 
@@ -559,6 +708,9 @@ namespace CQ.Runtime
         {
             foreach (var e in errors) Debug.LogError("[" + label + "] " + e);
         }
+
+        private static string SlotLabel(string slotId) =>
+            (Formation.RowOf(slotId) == "front" ? "前" : "后") + slotId[slotId.Length - 1];
 
         private string UnitName(string id)
         {

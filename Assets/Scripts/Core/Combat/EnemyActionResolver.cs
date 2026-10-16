@@ -24,6 +24,27 @@ namespace CQ.Core.Combat
             return list;
         }
 
+        /// <summary>只读查询，不推进意图、不消费 pending/Rng、不选择或锁定目标。</summary>
+        public EnemyIntentPreview Preview(CombatContext ctx, string enemyId, IntentConfig intent)
+        {
+            if (ctx == null || string.IsNullOrEmpty(enemyId)) return null;
+            var actor = ctx.GetUnit(enemyId);
+            if (actor == null || actor.Team != Team.Enemy) return null;
+            bool interrupted = ctx.HasStatus(enemyId, StatusType.Interrupt);
+            bool canAct = !actor.IsDead && GetPlayerTargets(ctx).Count > 0;
+            EnemyIntentPreviewStep pending = null;
+            if (_pending.TryGetValue(enemyId, out var charge))
+                pending = new EnemyIntentPreviewStep(ctx, enemyId, new IntentConfig
+                {
+                    type = "chargeRelease", target = "single", damage = charge.Damage,
+                    interruptible = charge.Interruptible
+                }, !canAct || (interrupted && charge.Interruptible));
+            var current = intent == null ? null : new EnemyIntentPreviewStep(ctx, enemyId, intent, !canAct || interrupted);
+            return new EnemyIntentPreview(interrupted, canAct,
+                ctx.FindStatus(enemyId, StatusType.AttackUp)?.Percent ?? 0,
+                ctx.FindStatus(enemyId, StatusType.Weaken)?.Percent ?? 0, pending, current);
+        }
+
         public void Resolve(CombatContext ctx, string enemyId, IntentConfig intent)
         {
             if (ctx == null || string.IsNullOrEmpty(enemyId) || intent == null) return;
@@ -83,26 +104,45 @@ namespace CQ.Core.Combat
 
         private void Attack(CombatContext ctx, string enemyId, IntentConfig intent)
         {
-            var players = GetPlayerTargets(ctx);
-            if (intent.target == "all")
-            {
-                foreach (var p in players)
-                    Damage.Apply(ctx, new DamageRequest { Amount = intent.damage, SourceUnitId = enemyId, TargetUnitId = p.Id });
-            }
-            else
-            {
-                var t = TargetSelector.PickTarget(ctx, players);
-                if (t != null)
-                    Damage.Apply(ctx, new DamageRequest { Amount = intent.damage, SourceUnitId = enemyId, TargetUnitId = t.Id });
-            }
+            ResolveAttack(ctx, enemyId, intent, 1);
         }
 
         private void Multi(CombatContext ctx, string enemyId, IntentConfig intent)
         {
-            var t = TargetSelector.PickTarget(ctx, GetPlayerTargets(ctx));
-            if (t == null) return;
-            for (int i = 0; i < intent.hits; i++)
-                Damage.Apply(ctx, new DamageRequest { Amount = intent.damage, SourceUnitId = enemyId, TargetUnitId = t.Id });
+            ResolveAttack(ctx, enemyId, intent, intent.hits);
+        }
+
+        private void ResolveAttack(CombatContext ctx, string enemyId, IntentConfig intent, int hits)
+        {
+            // 只选一次；死亡不重选。全体也在第一段前快照，附加效果不再走选目标。
+            var targets = new List<Unit>();
+            if (intent.target == "all" && intent.type == "attack")
+                targets.AddRange(GetPlayerTargets(ctx));
+            else
+            {
+                var target = TargetSelector.PickTarget(ctx, GetPlayerTargets(ctx));
+                if (target != null) targets.Add(target);
+            }
+            var hitTargets = new HashSet<Unit>();
+            for (int i = 0; i < hits; i++)
+                foreach (var target in targets)
+                {
+                    if (target.IsDead || intent.damage <= 0) continue;
+                    Damage.Apply(ctx, new DamageRequest
+                    {
+                        Amount = intent.damage, SourceUnitId = enemyId, TargetUnitId = target.Id
+                    });
+                    // 全盾挡/虚弱减至零也是实际命中，但死亡者不接受后续 debuff。
+                    hitTargets.Add(target);
+                }
+
+            // 前置伤害已结束战斗，不执行余下的自身 buff/目标 debuff。
+            if (GetPlayerTargets(ctx).Count == 0) return;
+            if (intent.buffPercent > 0) AttackUp(ctx, enemyId, intent);
+            if (!string.IsNullOrEmpty(intent.debuffType))
+                foreach (var target in targets)
+                    if (hitTargets.Contains(target) && !target.IsDead)
+                        ApplyDebuff(ctx, enemyId, target.Id, intent);
         }
 
         private void AttackUp(CombatContext ctx, string enemyId, IntentConfig intent)
@@ -126,7 +166,12 @@ namespace CQ.Core.Combat
         {
             var t = TargetSelector.PickTarget(ctx, GetPlayerTargets(ctx));
             if (t == null) return;
-            ctx.AddStatus(t.Id, new StatusEffect
+            ApplyDebuff(ctx, enemyId, t.Id, intent);
+        }
+
+        private static void ApplyDebuff(CombatContext ctx, string enemyId, string targetId, IntentConfig intent)
+        {
+            ctx.AddStatus(targetId, new StatusEffect
             {
                 Type = StatusTypes.Parse(intent.debuffType),
                 Percent = intent.debuffPercent,

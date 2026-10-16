@@ -8,6 +8,22 @@ namespace CQ.Core.Combat
     /// </summary>
     public static class Damage
     {
+        /// <summary>只读的源伤害修正；攻增、虚弱分别去尾，不处理护盾、目标或随机数。</summary>
+        public static DamageResult CalculateSourceDamage(CombatContext ctx, string sourceUnitId, int amount)
+        {
+            var result = new DamageResult { RawDamage = amount };
+            int damage = amount;
+            var attackUp = ctx.FindStatus(sourceUnitId, StatusType.AttackUp);
+            if (attackUp != null)
+                damage = Mathd.FloorToInt(damage * (1.0 + attackUp.Percent / 100.0));
+            result.AfterAttackUp = damage;
+            var weaken = ctx.FindStatus(sourceUnitId, StatusType.Weaken);
+            if (weaken != null)
+                damage = Mathd.FloorToInt(damage * (1.0 - weaken.Percent / 100.0));
+            result.AfterWeaken = damage;
+            return result;
+        }
+
         public static DamageResult Apply(CombatContext ctx, in DamageRequest req)
         {
             var result = new DamageResult { RawDamage = req.Amount };
@@ -15,17 +31,8 @@ namespace CQ.Core.Combat
             var target = ctx.GetUnit(req.TargetUnitId);
             if (source == null || target == null || target.IsDead || req.Amount <= 0) return result;
 
-            int dmg = req.Amount;
-
-            var attackUp = ctx.FindStatus(req.SourceUnitId, StatusType.AttackUp);
-            if (attackUp != null)
-                dmg = Mathd.FloorToInt(dmg * (1.0 + attackUp.Percent / 100.0));
-            result.AfterAttackUp = dmg;
-
-            var weaken = ctx.FindStatus(req.SourceUnitId, StatusType.Weaken);
-            if (weaken != null)
-                dmg = Mathd.FloorToInt(dmg * (1.0 - weaken.Percent / 100.0));
-            result.AfterWeaken = dmg;
+            result = CalculateSourceDamage(ctx, req.SourceUnitId, req.Amount);
+            int dmg = result.AfterWeaken;
 
             var shield = ctx.FindStatus(req.TargetUnitId, StatusType.Shield);
             int absorbed = 0;

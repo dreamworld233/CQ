@@ -135,6 +135,37 @@ public class FormationTests
         Assert.AreEqual(50, ctx.EffectiveTaunt(enemy));
     }
 
+    [TestCase(Team.Player)]
+    [TestCase(Team.Enemy)]
+    public void Slot_Cards_Stack_On_Empty_Slot_And_Priority_Follows_Independent_Expiry(Team team)
+    {
+        var front = U("front", team, "front1");
+        var back = U("back", team, "back1");
+        var ctx = new CombatContext(new Rng(17), new[] { front, back }, Rules());
+        var formation = ctx.FormationOf(team);
+        var empty = formation.GetSlot("back3");
+        CQ.Core.Cards.CardEffectResolver.ResolveSlot(
+            new CardEffectSpec { type = "tauntUp", amount = 100, duration = 2 }, ctx, team, "back3");
+        CQ.Core.Cards.CardEffectResolver.ResolveSlot(
+            new CardEffectSpec { type = "tauntUp", amount = 30, duration = 1 }, ctx, team, "back3");
+        CQ.Core.Cards.CardEffectResolver.ResolveSlot(
+            new CardEffectSpec { type = "tauntDown", amount = 60, duration = 1 }, ctx, team, "back3");
+        Assert.IsNull(empty.Occupant);
+        Assert.AreEqual(0, empty.EffectiveTaunt, "空格可挂效果，但不可成为攻击候选");
+        Assert.AreSame(front, TargetSelector.PickTarget(ctx, new[] { front, back }));
+        Assert.IsTrue(formation.TryMove(back, "back3"));
+        Assert.AreEqual(120, empty.EffectiveTaunt, "50 + 100 + 30 - 60，效果属于格而非单位");
+        Assert.AreSame(back, TargetSelector.PickTarget(ctx, new[] { front, back }));
+        CQ.Core.Status.StatusResolver.RoundEndTick(ctx);
+        Assert.AreEqual(150, empty.EffectiveTaunt, "一回合的增减同时到期，两回合的增加保留");
+        Assert.AreSame(back, TargetSelector.PickTarget(ctx, new[] { front, back }));
+        CQ.Core.Status.StatusResolver.RoundEndTick(ctx);
+        Assert.AreEqual(50, empty.EffectiveTaunt);
+        Assert.AreSame(front, TargetSelector.PickTarget(ctx, new[] { front, back }));
+        Assert.AreEqual(50, empty.BaseTaunt);
+        Assert.AreSame(back, empty.Occupant);
+    }
+
     [Test]
     public void Death_And_Empty_Slots_Have_Zero_Taunt_Without_Shifting_Occupants()
     {

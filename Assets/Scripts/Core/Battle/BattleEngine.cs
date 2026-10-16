@@ -218,13 +218,33 @@ namespace CQ.Core.Battle
         /// <summary>打出第 handIndex 张手牌，作用于 targetUnitId。效果即时生效。</summary>
         public bool PlayCard(int handIndex, string targetUnitId)
         {
-            if (!InputOpen || Ctx.GetUnit(targetUnitId) == null) return false;
+            if (!CanPlayCard(handIndex, targetUnitId)) return false;
             string cardId = Deck.Play(handIndex);
-            if (cardId == null || !_cards.TryGetValue(cardId, out var cfg)) return false;
+            var cfg = _cards[cardId];
             Ctx.BeginAction(BattleEventKind.Card, null, cardId, false);
             CardEffectResolver.Resolve(cfg.effect, Ctx, targetUnitId, CardSourceId);
-            Record(Ctx.CompleteAction());
+            Record(Ctx.CompleteAction(targetUnitId: targetUnitId));
             CheckWinner();
+            return true;
+        }
+
+        private CardConfig HandCard(int index) => index >= 0 && index < Hand.Count &&
+            _cards.TryGetValue(Hand[index], out var card) ? card : null;
+
+        public bool CanPlayCard(int index, string targetUnitId) => InputOpen &&
+            CardEffectResolver.IsValidUnitTarget(HandCard(index)?.effect, Ctx.GetUnit(targetUnitId));
+
+        public bool CanPlaySlotCard(int index, Team team, string slotId) => InputOpen &&
+            (team == Team.Player || team == Team.Enemy) &&
+            CardEffectResolver.IsSlotEffect(HandCard(index)?.effect) && Formation.IsValidSlot(slotId);
+
+        public bool PlaySlotCard(int index, Team team, string slotId)
+        {
+            if (!CanPlaySlotCard(index, team, slotId)) return false;
+            string cardId = Deck.Play(index);
+            Ctx.BeginAction(BattleEventKind.Card, null, cardId, false);
+            CardEffectResolver.ResolveSlot(_cards[cardId].effect, Ctx, team, slotId);
+            Record(Ctx.CompleteAction(team, slotId));
             return true;
         }
 
@@ -360,7 +380,8 @@ namespace CQ.Core.Battle
                     TargetId = change.UnitId, HpDelta = change.HpDelta, TargetDead = change.After.IsDead });
             }
             if (!any) _events.Add(new BattleEvent { Kind = result.Kind, ActorId = result.ActorId,
-                ActionId = result.ActionId, TargetId = result.ActorId });
+                ActionId = result.ActionId, TargetId = result.TargetUnitId ?? result.ActorId,
+                TargetTeam = result.TargetTeam, TargetSlotId = result.TargetSlotId });
         }
 
         private void ActPlayer(Unit unit)
@@ -389,6 +410,10 @@ namespace CQ.Core.Battle
 
         public IntentModel GetIntent(string enemyId) =>
             _intents.TryGetValue(enemyId, out var m) ? m : null;
+
+        /// <summary>只读意图快照：本轮 pending 释放 + 当前意图；数字为当前源状态下盾前伤害，不锁目标。</summary>
+        public EnemyIntentPreview GetIntentPreview(string enemyId) =>
+            string.IsNullOrEmpty(enemyId) ? null : _enemyResolver.Preview(Ctx, enemyId, CurrentIntentOf(enemyId));
 
         public IntentConfig CurrentIntentOf(string enemyId) => GetIntent(enemyId)?.CurrentIntent;
 

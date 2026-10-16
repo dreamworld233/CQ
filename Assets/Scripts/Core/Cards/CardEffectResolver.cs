@@ -9,6 +9,26 @@ namespace CQ.Core.Cards
     /// </summary>
     public static class CardEffectResolver
     {
+        public static bool IsSlotEffect(CardEffectSpec effect) =>
+            effect != null && (effect.type == "tauntUp" || effect.type == "tauntDown");
+
+        public static bool IsValidUnitTarget(CardEffectSpec effect, Unit target)
+        {
+            if (effect == null || target == null || target.IsDead) return false;
+            switch (effect.type)
+            {
+                case "interrupt": case "weaken": case "slow": return target.Team == Team.Enemy;
+                case "haste": case "shield": case "attackUp": return target.Team == Team.Player;
+                default: return false;
+            }
+        }
+
+        public static void ResolveSlot(CardEffectSpec effect, CombatContext ctx, Team team, string slotId)
+        {
+            ctx.FormationOf(team).GetSlot(slotId).AddModifier(
+                effect.type == "tauntUp" ? effect.amount : -effect.amount, effect.duration);
+        }
+
         public static void Resolve(CardEffectSpec effect, CombatContext ctx, string targetUnitId, string sourceUnitId)
         {
             if (effect == null || ctx == null || string.IsNullOrEmpty(targetUnitId)) return;

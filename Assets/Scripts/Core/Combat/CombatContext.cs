@@ -40,7 +40,7 @@ namespace CQ.Core.Combat
             if (_hits != null) _hits.Add(new AttackHit(source, target, hpDamage, absorbed, dead));
         }
 
-        public ActionResult CompleteAction()
+        public ActionResult CompleteAction(Team? targetTeam = null, string targetSlotId = null, string targetUnitId = null)
         {
             if (_before == null) throw new InvalidOperationException("没有进行中的动作");
             var charges = new List<UltCharge>();
@@ -52,7 +52,7 @@ namespace CQ.Core.Combat
             var changes = new List<UnitChange>();
             foreach (var before in _before)
                 changes.Add(new UnitChange(before, new UnitSnapshot(GetUnit(before.UnitId), this)));
-            var result = new ActionResult(++_sequence, _kind, _actor?.Id, _actionId, changes, _hits, charges);
+            var result = new ActionResult(++_sequence, _kind, _actor?.Id, _actionId, changes, _hits, charges, targetTeam, targetSlotId, targetUnitId);
             _before = null; _hits = null; _actor = null;
             _results.Add(result);
             return result;

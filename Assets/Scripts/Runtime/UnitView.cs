@@ -51,6 +51,7 @@ namespace CQ.Runtime
         private TextMeshPro _stat;
         private TextMeshPro _hpText;
         private TextMeshPro _intent;
+        private TextMeshPro _status;
         private Transform _frame;
         private readonly SpriteRenderer[] _frameBars = new SpriteRenderer[4];
         private SpriteRenderer _ring;              // 选中/可选目标圆环（素材 `按钮选中框.png`）
@@ -104,6 +105,9 @@ namespace CQ.Runtime
             _label = TmpKit.MakeWorldText(transform, "Label", new Vector3(0f, LabelY, 0f),
                 UiKit.FontBold, LabelTextH, Color.white, 55, FontStyles.Normal, unit.Name);
             TmpKit.SetOutline(_label, new Color(0f, 0f, 0f, 0.9f), 0.2f);
+            _status = TmpKit.MakeWorldText(transform, "StatusText", new Vector3(0f, StatY - 0.36f, 0f),
+                UiKit.Font, StatTextH, new Color(0.75f, 0.92f, 1f), 55);
+            TmpKit.SetOutline(_status, new Color(0f, 0f, 0f, 0.9f), 0.2f);
 
             _frame = MakeFrame();
             _ring = MakeRing();   // 有圆环素材时用圆环，方框仅作兜底
@@ -122,7 +126,7 @@ namespace CQ.Runtime
             if (_sr != null) _sr.sortingOrder = unit.Row == "front" ? 10 : 5;
         }
 
-        public void Refresh(Unit unit, string intentText, string intentType)
+        public void Refresh(Unit unit, string intentText, string intentType, string statusText = "")
         {
             float hpRatio = unit.MaxHp > 0 ? (float)unit.Hp / unit.MaxHp : 0f;
             if (_hpFill != null)
@@ -155,19 +159,36 @@ namespace CQ.Runtime
                 TmpKit.FitWorldHeight(_stat, StatTextH);
             }
 
+            if (_status != null)
+            {
+                _status.text = unit.IsDead ? "" : statusText;
+                _status.gameObject.SetActive(!string.IsNullOrEmpty(_status.text));
+                FitReadableText(_status, StatTextH, 2.7f);
+            }
+
+            bool composite = !string.IsNullOrEmpty(intentText) && intentText.Contains("\n");
             var icon = ArtLibrary.IntentSprite(intentType);
             if (_intentIcon != null)
             {
                 _intentIcon.sprite = icon;
                 if (icon != null) FitSpriteHeight(_intentIcon.transform, icon, IconHeight);
-                _intentIcon.gameObject.SetActive(icon != null);
+                _intentIcon.gameObject.SetActive(icon != null && !composite);
             }
 
             if (_intent != null)
             {
                 _intent.text = intentText;
                 _intent.gameObject.SetActive(!string.IsNullOrEmpty(intentText));
+                FitReadableText(_intent, IntentTextH * (composite ? 2f : 1f), 2.7f);
             }
+        }
+
+        private static void FitReadableText(TextMeshPro text, float height, float maxWidth)
+        {
+            if (text == null || !text.gameObject.activeInHierarchy || string.IsNullOrEmpty(text.text)) return;
+            TmpKit.FitWorldHeight(text, height);
+            float width = text.textBounds.size.x * text.transform.localScale.x;
+            if (width > maxWidth) text.transform.localScale *= maxWidth / width;
         }
 
         /// <summary>飘字（伤害/治疗数值），到时自动销毁。magnitude 越大字越大。</summary>

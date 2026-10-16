@@ -7,7 +7,8 @@ namespace CQ.Core.Config
     {
         public string type;    // interrupt | weaken | slow | haste | shield | attackUp
         public int percent;    // weaken / slow / haste / attackUp
-        public int amount;     // shield
+        public int amount;     // shield / tauntUp / tauntDown
+        public int duration;
     }
 
     [Serializable]

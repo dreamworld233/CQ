@@ -5,8 +5,7 @@ using CQ.Core.Cards;
 using CQ.Core.Combat;
 using CQ.Core.Config;
 
-// 卡牌效果解析测试。6 个独特效果各触发一次。
-// 说明：8 张卡 = 6 独特效果 × count 合计 8。count 只是卡组数据，不参与 Resolve。
+// 八种卡牌效果；count 仅参与组牌，单位/格子入口约束由引擎测试覆盖。
 public class CardEffectResolverTests
 {
     private static CombatContext Ctx()
@@ -14,8 +13,8 @@ public class CardEffectResolverTests
         var rng = new Rng(1);
         var units = new List<Unit>
         {
-            new Unit("source", Team.Player) { SlotId = "front1" },
-            new Unit("target", Team.Enemy) { SlotId = "front1" }
+            new Unit("source", Team.Player) { SlotId = "front1", MaxHp = 100, Hp = 100 },
+            new Unit("target", Team.Enemy) { SlotId = "front1", MaxHp = 100, Hp = 100 }
         };
         return new CombatContext(rng, units);
     }
@@ -60,9 +59,9 @@ public class CardEffectResolverTests
     public void Shield_Sets_Amount_From_Config_And_Turn_Once()
     {
         var ctx = Ctx();
-        CardEffectResolver.Resolve(Fx("shield", 0, 40), ctx, "target", "source");
+        CardEffectResolver.Resolve(Fx("shield", 0, 40), ctx, "source", "source");
 
-        var fx = ctx.FindStatus("target", StatusType.Shield);
+        var fx = ctx.FindStatus("source", StatusType.Shield);
         Assert.IsNotNull(fx);
         Assert.AreEqual(40, fx.Amount);
         Assert.AreEqual("once", fx.Turn);
@@ -72,18 +71,41 @@ public class CardEffectResolverTests
     public void AttackUp_Sets_Percent_From_Config()
     {
         var ctx = Ctx();
-        CardEffectResolver.Resolve(Fx("attackUp", 20, 0), ctx, "target", "source");
+        CardEffectResolver.Resolve(Fx("attackUp", 20, 0), ctx, "source", "source");
 
-        Assert.IsTrue(ctx.HasStatus("target", StatusType.AttackUp));
-        Assert.AreEqual(20, ctx.FindStatus("target", StatusType.AttackUp).Percent);
+        Assert.IsTrue(ctx.HasStatus("source", StatusType.AttackUp));
+        Assert.AreEqual(20, ctx.FindStatus("source", StatusType.AttackUp).Percent);
     }
 
     [Test]
     public void Haste_Sets_Haste_From_Config()
     {
         var ctx = Ctx();
-        CardEffectResolver.Resolve(Fx("haste", 15, 0), ctx, "target", "source");
+        CardEffectResolver.Resolve(Fx("haste", 15, 0), ctx, "source", "source");
 
-        Assert.AreEqual(15, ctx.GetHaste("target"));
+        Assert.AreEqual(15, ctx.GetHaste("source"));
+    }
+
+    [TestCase("tauntUp", 35)]
+    [TestCase("tauntDown", -35)]
+    public void Slot_Effect_Uses_Positive_Amount_And_Configured_Duration(string type, int delta)
+    {
+        var ctx = new CombatContext(new Rng(1), new[]
+        {
+            new Unit("p", Team.Player) { SlotId = "front1", MaxHp = 100, Hp = 100 },
+            new Unit("e", Team.Enemy) { SlotId = "front1", MaxHp = 100, Hp = 100 }
+        }, new FormationConfig { frontBaseTaunt = 100, backBaseTaunt = 50 });
+        foreach (var team in new[] { Team.Player, Team.Enemy })
+        {
+            var effect = new CardEffectSpec { type = type, amount = 35, duration = 2 };
+            Assert.IsTrue(CardEffectResolver.IsSlotEffect(effect));
+            CardEffectResolver.ResolveSlot(effect, ctx, team, "front1");
+            var slot = ctx.FormationOf(team).GetSlot("front1");
+            Assert.AreEqual(100 + delta, slot.EffectiveTaunt);
+            slot.Tick();
+            Assert.AreEqual(100 + delta, slot.EffectiveTaunt);
+            slot.Tick();
+            Assert.AreEqual(100, slot.EffectiveTaunt);
+        }
     }
 }

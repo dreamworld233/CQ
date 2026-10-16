@@ -1,1 +1,1 @@
-{ "id": "interrupt", "name": "打断", "effect": { "type": "interrupt" }, "count": 2 }
+{ "id": "interrupt", "name": "打断", "effect": { "type": "interrupt" }, "count": 1 }

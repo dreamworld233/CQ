@@ -28,6 +28,17 @@ public class ConfigLoaderTests
         Assert.AreEqual(5, statuses.items.Count, "状态应为 5");
         Assert.AreEqual(3, levels.items.Count, "关卡应为 3");
 
+        Assert.AreEqual(8, cards.items.Count, "卡定义应为 8 种");
+        CollectionAssert.AreEquivalent(new[]
+        {
+            "interrupt", "weaken", "slow", "haste", "shield", "attackUp", "tauntUp", "tauntDown"
+        }, cards.items.Select(c => c.effect.type));
+        Assert.IsTrue(cards.items.All(c => c.count == 1), "每种卡恰好一张");
+        foreach (var card in cards.items.Where(c => c.effect.type == "tauntUp" || c.effect.type == "tauntDown"))
+        {
+            Assert.Greater(card.effect.amount, 0, card.id);
+            Assert.Greater(card.effect.duration, 0, card.id);
+        }
         int cardCopies = 0;
         foreach (var c in cards.items) cardCopies += c.count;
         Assert.AreEqual(8, cardCopies, "卡总张数应为 8");
@@ -299,6 +310,22 @@ public class ConfigLoaderTests
         };
         for (int i = 0; i < invalid.Length; i++)
             Assert.IsNotNull(ConfigValidator.ValidateLevel(invalid[i]), "非法波次用例 " + i);
+    }
+
+    [TestCase("tauntUp", 30, 2, true)]
+    [TestCase("tauntDown", 30, 2, true)]
+    [TestCase("tauntUp", 0, 2, false)]
+    [TestCase("tauntDown", -30, 2, false)]
+    [TestCase("tauntUp", 30, 0, false)]
+    [TestCase("tauntDown", 30, -1, false)]
+    public void Slot_Card_Requires_Positive_Amount_And_Duration(string type, int amount, int duration, bool valid)
+    {
+        var card = new CardConfig
+        {
+            id = type, name = type, count = 1,
+            effect = new CardEffectSpec { type = type, amount = amount, duration = duration }
+        };
+        Assert.AreEqual(valid, ConfigValidator.ValidateCard(card) == null);
     }
 
     [Test]

@@ -11,7 +11,7 @@ namespace CQ.Core.Config
     {
         private static readonly string[] SkillTypes = { "basic", "ult" };
         private static readonly string[] IntentTypes = { "attack", "charge", "attackUp", "multi", "debuff" };
-        private static readonly string[] CardTypes = { "interrupt", "weaken", "slow", "haste", "shield", "attackUp" };
+        private static readonly string[] CardTypes = { "interrupt", "weaken", "slow", "haste", "shield", "attackUp", "tauntUp", "tauntDown" };
         private static readonly string[] StatusIds = { "weaken", "shield", "attackUp", "slow", "interrupt" };
         private static readonly string[] Turns = { "round", "once" };
 
@@ -66,18 +66,55 @@ namespace CQ.Core.Config
             if (e.intents == null || e.intents.Count == 0) return "intents 空";
             if (e.intentSequence == null || e.intentSequence.Length < 2 || e.intentSequence.Length > 4)
                 return "intentSequence 长度须 2~4";
-            foreach (var id in e.intentSequence)
-                if (FindIntent(e, id) == null) return "intentSequence 引用未定义意图: " + id;
+            var ids = new HashSet<string>();
             foreach (var it in e.intents)
             {
-                if (string.IsNullOrEmpty(it.id)) return "意图缺 id";
+                if (it == null) return "意图为空";
+                if (string.IsNullOrWhiteSpace(it.id) || !ids.Add(it.id)) return "意图 id 空或重复";
                 if (!In(IntentTypes, it.type)) return "意图 type 非法: " + it.type;
-                if (it.type == "charge" && !it.interruptible) return "charge 必须 interruptible=true";
-                if (it.type == "attackUp" && it.buffPercent <= 0) return "attackUp 需 buffPercent > 0";
-                if (it.type == "attackUp" && it.buffDuration <= 0) return "attackUp 需 buffDuration > 0";
-                if (it.type == "debuff" && !In(StatusIds, it.debuffType)) return "debuff 的 debuffType 非法: " + it.debuffType;
-                if (it.type == "debuff" && it.debuffPercent <= 0) return "debuff 需 debuffPercent > 0";
+                bool attack = it.type == "attack" || it.type == "multi";
+                bool buff = it.buffPercent != 0 || it.buffDuration != 0;
+                bool debuff = !string.IsNullOrEmpty(it.debuffType) || it.debuffPercent != 0 || it.debuffDuration != 0;
+                if (attack)
+                {
+                    if (it.damage <= 0) return "攻击 damage 须 > 0";
+                    if (it.target != "single" && it.target != "all") return "攻击 target 须为 single|all";
+                    if (it.type == "multi" && (it.target != "single" || it.hits <= 0))
+                        return "multi 须 single 且 hits > 0";
+                    if (it.type == "attack" && it.hits != 0) return "attack 不可配置 hits";
+                }
+                else
+                {
+                    if (it.damage != 0 || it.hits != 0) return "非攻击意图不可配置 damage/hits";
+                    if (it.type == "debuff")
+                    {
+                        if (it.target != "single") return "debuff target 须为 single";
+                    }
+                    else if (!string.IsNullOrEmpty(it.target) && it.target != "single")
+                        return "charge/attackUp target 仅可省略或为 single";
+                }
+                if (it.type == "charge")
+                {
+                    if (it.nextDamage <= 0) return "charge nextDamage 须 > 0";
+                    if (!it.interruptible) return "charge 必须 interruptible=true";
+                }
+                else if (it.nextDamage != 0 || it.interruptible) return "非 charge 意图不可配置蓄力字段";
+                if (buff || it.type == "attackUp")
+                {
+                    if (!attack && it.type != "attackUp") return "此意图不可配置 buff";
+                    if (it.buffPercent <= 0 || it.buffDuration <= 0) return "buff 需正数 buffPercent/buffDuration";
+                }
+                if (debuff || it.type == "debuff")
+                {
+                    if (!attack && it.type != "debuff") return "此意图不可配置 debuff";
+                    if (it.debuffType != "weaken" && it.debuffType != "slow") return "debuffType 须为 weaken|slow";
+                    if (it.debuffPercent <= 0 || it.debuffPercent > 100 || it.debuffDuration <= 0)
+                        return "debuff 需 1~100 debuffPercent 及正数 debuffDuration";
+                }
             }
+            foreach (var id in e.intentSequence)
+                if (string.IsNullOrWhiteSpace(id) || FindIntent(e, id) == null)
+                    return "intentSequence 引用未定义意图: " + id;
             return null;
         }
 
@@ -95,6 +132,17 @@ namespace CQ.Core.Config
             if (c.effect == null) return "缺 effect";
             if (!In(CardTypes, c.effect.type)) return "卡效果 type 非法: " + c.effect.type;
             if (c.count <= 0) return "count 须 > 0";
+            if (c.effect.type == "tauntUp" || c.effect.type == "tauntDown")
+            {
+                if (c.effect.amount <= 0 || c.effect.duration <= 0) return "格子卡 amount/duration 须 > 0";
+            }
+            else if (c.effect.type == "shield")
+            {
+                if (c.effect.amount <= 0) return "shield amount 须 > 0";
+            }
+            else if (c.effect.type != "interrupt" && c.effect.percent <= 0)
+                return "卡效果 percent 须 > 0";
+            if (c.effect.type == "weaken" && c.effect.percent > 100) return "weaken percent 不可超过100";
             return null;
         }
 

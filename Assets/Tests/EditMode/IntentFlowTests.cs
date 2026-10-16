@@ -20,7 +20,9 @@ public class IntentFlowTests
         skills = new List<SkillSpec>
         {
             new SkillSpec { id = "sword_basic", name = "普攻", type = "basic",
-                damage = new DamageSpec { kind = "physical", target = "single", amount = 12 } }
+                damage = new DamageSpec { kind = "physical", target = "single", amount = 12 } },
+            new SkillSpec { id = "sword_ult", name = "必杀", type = "ult",
+                damage = new DamageSpec { kind = "physical", target = "single", amount = 24 } }
         }
     };
 
@@ -44,10 +46,10 @@ public class IntentFlowTests
         name = "沙包",
         maxHp = 99999,
         baseSpeed = 1,
-        intentSequence = new[] { "attack" },
+        intentSequence = new[] { "idle", "idle" },
         intents = new List<IntentConfig>
         {
-            new IntentConfig { id = "attack", type = "attack", target = "single", damage = 0 }
+            new IntentConfig { id = "idle", type = "attackUp", buffPercent = 1, buffDuration = 1 }
         }
     };
 
@@ -74,12 +76,44 @@ public class IntentFlowTests
     private static EnemyConfig Attacker(string type = "attack", string target = "single")
     {
         var config = Bag();
-        config.intentSequence = new[] { "hit" };
+        config.intentSequence = new[] { "hit", "hit" };
         config.intents = new List<IntentConfig>
         {
-            new IntentConfig { id = "hit", type = type, target = target, damage = 25, hits = 3 }
+            new IntentConfig { id = "hit", type = type, target = target, damage = 25, hits = type == "multi" ? 3 : 0 }
         };
         return config;
+    }
+
+    [Test]
+    public void Engine_Preview_Exposes_Pending_Current_And_Interrupt_Without_Advancing()
+    {
+        Assert.IsNull(ConfigValidator.ValidateEnemy(Lord()));
+        Assert.IsNull(ConfigValidator.ValidateEnemy(Bag()));
+        Assert.IsNull(ConfigValidator.ValidateEnemy(Attacker()));
+        var eng = Make(7, new[] { Sword() }, new[] { Lord() });
+        eng.StartBattle();
+        string id = eng.Enemies[0].Id;
+        var first = eng.GetIntentPreview(id);
+        Assert.AreEqual("charge", first.Type);
+        Assert.AreEqual(120, first.Current.NextRoundDamage);
+        Assert.IsNull(first.PendingRelease);
+        BattleTestDriver.CompleteRound(eng);
+        int results = eng.ActionResults.Count;
+        var preview = eng.GetIntentPreview(id);
+        Assert.AreEqual("attack", preview.Type);
+        Assert.AreEqual(120, preview.PendingRelease.DamagePerHit);
+        Assert.AreEqual(40, preview.Current.DamagePerHit);
+        eng.Ctx.AddStatus(id, new StatusEffect { Type = StatusType.Interrupt });
+        var interrupted = eng.GetIntentPreview(id);
+        Assert.IsTrue(interrupted.Interrupted);
+        Assert.IsTrue(interrupted.PendingRelease.Suppressed);
+        Assert.IsTrue(interrupted.Current.Suppressed);
+        Assert.IsFalse(preview.Interrupted, "旧快照不随状态变化");
+        Assert.AreEqual("attack", eng.GetIntent(id).CurrentIntentId);
+        Assert.AreEqual(results, eng.ActionResults.Count);
+        Assert.IsNull(eng.GetIntentPreview(null));
+        Assert.IsNull(eng.GetIntentPreview("missing"));
+        Assert.IsNull(eng.GetIntentPreview("sword"));
     }
 
     [TestCase("attack", 25)]

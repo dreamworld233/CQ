@@ -104,6 +104,127 @@ public class BalanceTests
             }
     }
 
+    // Strategy tie-breaks are stable IDs; never consume engine.Rng to decide commands.
+    private static void PlayLegalHand(BattleEngine eng)
+    {
+        int budget = eng.Hand.Count;
+        for (int index = 0; index < eng.Hand.Count && budget-- > 0;)
+        {
+            var card = eng.GetCard(eng.Hand[index]);
+            var players = eng.Players.Where(u => !u.IsDead).ToArray();
+            var enemies = eng.Enemies.Where(u => !u.IsDead).ToArray();
+            bool played = false;
+            if (card.effect.type == "tauntUp" || card.effect.type == "tauntDown")
+            {
+                // Concentrate attacks on the healthy tank; protect the most fragile survivor.
+                var target = card.effect.type == "tauntUp"
+                    ? players.OrderByDescending(u => u.Hp).ThenBy(u => u.Id, System.StringComparer.Ordinal).FirstOrDefault()
+                    : players.OrderBy(u => u.Hp).ThenBy(u => u.Id, System.StringComparer.Ordinal).FirstOrDefault();
+                if (target != null && eng.CanPlaySlotCard(index, Team.Player, target.SlotId))
+                {
+                    Assert.IsTrue(eng.PlaySlotCard(index, Team.Player, target.SlotId));
+                    played = true;
+                }
+            }
+            else
+            {
+                System.Collections.Generic.IEnumerable<Unit> targets;
+                switch (card.effect.type)
+                {
+                    case "interrupt":
+                    case "weaken":
+                    case "slow":
+                        targets = enemies.OrderByDescending(u => eng.CurrentIntentOf(u.Id)?.type == "charge")
+                            .ThenByDescending(u => eng.CurrentIntentOf(u.Id)?.nextDamage ?? 0)
+                            .ThenByDescending(u => eng.CurrentIntentOf(u.Id)?.damage ?? 0)
+                            .ThenByDescending(u => u.BaseSpeed).ThenBy(u => u.Id, System.StringComparer.Ordinal);
+                        break;
+                    case "shield":
+                        targets = players.OrderByDescending(u => eng.Ctx.EffectiveTaunt(u))
+                            .ThenBy(u => u.Hp).ThenBy(u => u.Id, System.StringComparer.Ordinal);
+                        break;
+                    default:
+                        targets = players.OrderByDescending(u => eng.SkillsOf(u.Id)?.FirstOrDefault(s => s.type == "basic")?.damage?.amount ?? 0)
+                            .ThenBy(u => u.Id, System.StringComparer.Ordinal);
+                        break;
+                }
+                var target = targets.FirstOrDefault(u => eng.CanPlayCard(index, u.Id));
+                if (target != null)
+                {
+                    Assert.IsTrue(eng.PlayCard(index, target.Id));
+                    played = true;
+                }
+            }
+            if (!played) index++;
+        }
+    }
+
+    private static void RequestReadyUltimates(BattleEngine eng)
+    {
+        foreach (var player in eng.Players.OrderBy(u => u.Id, System.StringComparer.Ordinal))
+        {
+            if (!eng.CanRequestUltimate(player.Id)) continue;
+            var skill = eng.UltimateOf(player.Id);
+            if (skill.heal != null && !eng.Players.Any(u => !u.IsDead && u.Hp < u.MaxHp)) continue;
+            Assert.IsTrue(eng.RequestUltimate(player.Id), "合法就绪终结技应允许请求: " + player.Id);
+        }
+    }
+
+    private static string RemainingHp(BattleEngine eng) =>
+        string.Join(",", eng.Ctx.Units.Select(u => u.Id + "=" + u.Hp + "/" + u.MaxHp));
+
+    [TestCase(1, 7)]
+    [TestCase(1, 17)]
+    [TestCase(1, 37)]
+    [TestCase(1, 73)]
+    [TestCase(1, 101)]
+    [TestCase(2, 7)]
+    [TestCase(2, 17)]
+    [TestCase(2, 37)]
+    [TestCase(2, 73)]
+    [TestCase(2, 101)]
+    [TestCase(3, 7)]
+    [TestCase(3, 17)]
+    [TestCase(3, 37)]
+    [TestCase(3, 73)]
+    [TestCase(3, 101)]
+    public void All_Levels_Legal_Cards_And_Requested_Ultimates_Are_Winnable(int level, int seed)
+    {
+        var eng = BuildLevel(level, seed);
+        eng.StartBattle();
+        const int maxSteps = 10000;
+        const int maxRounds = 200;
+        int lastLoggedRound = -1;
+        int step = 0;
+        for (; step < maxSteps && !eng.IsFinished && eng.Round < maxRounds; step++)
+        {
+            if (eng.CanPlayCards)
+            {
+                if (lastLoggedRound != eng.Round)
+                {
+                    TestContext.WriteLine($"level={level} seed={seed} round={eng.Round} HP: {RemainingHp(eng)}");
+                    lastLoggedRound = eng.Round;
+                }
+                PlayLegalHand(eng);
+            }
+            RequestReadyUltimates(eng);
+            if (eng.CanPlayCards) Assert.IsTrue(eng.BeginActions());
+            var result = eng.CurrentAction ?? eng.Advance();
+            if (result == null) continue;
+            // Check after the entire action (including multi-hit charging), before Confirm.
+            // This permits newly-ready ultimates at every action boundary, not only each round.
+            RequestReadyUltimates(eng);
+            Assert.IsTrue(eng.Confirm(eng.BattleId, result.Sequence));
+        }
+        string summary = $"level={level} seed={seed} round={eng.Round} steps={step} winner={eng.Winner} HP: {RemainingHp(eng)}";
+        TestContext.WriteLine(summary);
+        Assert.IsTrue(eng.IsFinished, "模拟必须在步数/回合上限内结束: " + summary);
+        Assert.IsNull(eng.CurrentAction, "最后一个致胜动作也必须完成确认");
+        Assert.AreEqual(Team.Player, eng.Winner, "合法卡牌与主动终结技策略应可胜: " + summary);
+        Assert.Greater(eng.Players.Sum(u => u.Hp), 0, summary);
+        Assert.AreEqual(0, eng.Enemies.Sum(u => u.Hp), summary);
+    }
+
     [Test]
     public void All_Levels_Terminate_Under_AutoBasic()
     {
