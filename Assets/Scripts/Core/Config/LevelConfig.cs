@@ -7,6 +7,7 @@ namespace CQ.Core.Config
     public class WaveConfig
     {
         public string[] enemies;
+        public string[] slots; // 与 enemies 平行，重复怪物各自指定占位
     }
 
     [Serializable]

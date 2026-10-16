@@ -1,286 +1,314 @@
-using NUnit.Framework;
+using System;
 using System.Collections.Generic;
+using System.Linq;
+using NUnit.Framework;
 using CQ.Core.Battle;
 using CQ.Core.Combat;
 using CQ.Core.Config;
+using CQ.Core.Status;
 using CQ.Runtime;
 
 public class SkillResolverTests
 {
-    // 对齐 sample JSON 的固定数值（测试常量，非运行时硬编码）。
-    private const int BasicEnergyDelta = 1;
-    private const int BasicUltDelta = 1;
-    private const int SkillEnergyCost = 2;
-    private const int SkillUltDelta = 1;
-    private const int MaxEnergyFull = 3;
-    private const int MaxUltFull = 3;
+    private static Unit U(string id, Team team, string slot = "front1", string trigger = "attack", int hp = 100) =>
+        new Unit(id, team) { SlotId = slot, Hp = hp, MaxHp = hp, MaxUlt = 3,
+            UltChargeTrigger = trigger, UltChargeAmount = 1 };
+    private static CombatContext Ctx(params Unit[] units) => new CombatContext(new Rng(1), units,
+        new FormationConfig { frontBaseTaunt = 100, backBaseTaunt = 50 });
+    private static SkillSpec Attack(string type = "basic", string target = "single", int amount = 12) =>
+        new SkillSpec { id = type, type = type, damage = new DamageSpec { kind = "physical", target = target, amount = amount } };
+    private static ActionResult Cast(CombatContext ctx, Unit actor, SkillSpec skill, Unit target = null) =>
+        SkillResolver.Resolve(skill, ctx, actor, target,
+            ctx.Units.Where(u => u.Team == actor.Team).ToList(), ctx.Units.Where(u => u.Team != actor.Team).ToList());
 
-    private const int SwordBasicDmg = 12;
-    private const int SwordSkillDmg = 30;
-    private const int SwordUltDmg = 45;
-
-    private const int GuardBasicDmg = 8;
-    private const int GuardSkillHeal = 15;
-    private const int GuardUltHeal = 20;
-
-    private const int MageBasicDmg = 10;
-    private const int MageSkillDmg = 28;
-    private const int MageUltDmg = 38;
-
-    private static Unit P(string id, int hp) => new Unit(id, Team.Player)
+    [TestCase(12, "physical")]
+    [TestCase(8, "physical")]
+    [TestCase(10, "magic")]
+    public void Basic_Deals_Configured_Damage_And_Charges_Once(int damage, string kind)
     {
-        MaxHp = hp, Hp = hp, MaxEnergy = MaxEnergyFull, MaxUlt = MaxUltFull
-    };
-
-    private static Unit E(string id, int hp) => new Unit(id, Team.Enemy) { MaxHp = hp, Hp = hp };
-
-    private static CombatContext Ctx(params Unit[] units) => new CombatContext(new Rng(1), units);
-
-    private static SkillSpec Basic(string id, string kind, int dmg) => new SkillSpec
-    {
-        id = id, type = "basic", energyDelta = BasicEnergyDelta, ultDelta = BasicUltDelta,
-        damage = new DamageSpec { kind = kind, target = "single", amount = dmg }
-    };
-
-    private static SkillSpec DamageSkill(string id, string kind, int dmg) => new SkillSpec
-    {
-        id = id, type = "skill", energyCost = SkillEnergyCost, ultDelta = SkillUltDelta,
-        damage = new DamageSpec { kind = kind, target = "single", amount = dmg }
-    };
-
-    private static SkillSpec DamageUlt(string id, string kind, int dmg) => new SkillSpec
-    {
-        id = id, type = "ult",
-        damage = new DamageSpec { kind = kind, target = "all", amount = dmg }
-    };
-
-    private static SkillSpec HealSkill(int amount) => new SkillSpec
-    {
-        id = "guard_skill", type = "skill", energyCost = SkillEnergyCost, ultDelta = SkillUltDelta,
-        heal = new HealSpec { target = "self", amount = amount }
-    };
-
-    private static SkillSpec HealUlt(int amount) => new SkillSpec
-    {
-        id = "guard_ult", type = "ult",
-        heal = new HealSpec { target = "all", amount = amount }
-    };
-
-    // ---------- sword × basic ----------
-    [Test]
-    public void Sword_Basic_GainsEnergyAndUlt_DealsDamage()
-    {
-        var caster = P("sword", 100);
-        var target = E("e1", 100);
-        var ctx = Ctx(caster, target);
-
-        SkillResolver.Resolve(Basic("sword_basic", "physical", SwordBasicDmg), ctx, caster, target,
-            new List<Unit> { caster }, new List<Unit> { target });
-
-        Assert.AreEqual(BasicEnergyDelta, caster.Energy);
-        Assert.AreEqual(BasicUltDelta, caster.Ult);
-        Assert.AreEqual(100 - SwordBasicDmg, target.Hp);
-    }
-
-    // ---------- sword × skill ----------
-    [Test]
-    public void Sword_Skill_CostsEnergy_GainsUlt_DealsDamage()
-    {
-        var caster = P("sword", 100);
-        caster.Energy = SkillEnergyCost;
-        var target = E("e1", 100);
-        var ctx = Ctx(caster, target);
-
-        SkillResolver.Resolve(DamageSkill("sword_skill", "physical", SwordSkillDmg), ctx, caster, target,
-            new List<Unit> { caster }, new List<Unit> { target });
-
-        Assert.AreEqual(0, caster.Energy, "能量应扣到 0");
-        Assert.AreEqual(SkillUltDelta, caster.Ult);
-        Assert.AreEqual(100 - SwordSkillDmg, target.Hp);
-    }
-
-    // ---------- sword × ult ----------
-    [Test]
-    public void Sword_Ult_FullBarResets_DealsDamageToAll()
-    {
-        var caster = P("sword", 100);
-        caster.Ult = MaxUltFull;
-        var e1 = E("e1", 100);
-        var e2 = E("e2", 100);
-        var ctx = Ctx(caster, e1, e2);
-
-        SkillResolver.Resolve(DamageUlt("sword_ult", "physical", SwordUltDmg), ctx, caster, e1,
-            new List<Unit> { caster }, new List<Unit> { e1, e2 });
-
-        Assert.AreEqual(0, caster.Ult, "满大招应归零");
-        Assert.AreEqual(100 - SwordUltDmg, e1.Hp);
-        Assert.AreEqual(100 - SwordUltDmg, e2.Hp);
-    }
-
-    // ---------- guard × basic ----------
-    [Test]
-    public void Guard_Basic_GainsEnergyAndUlt_DealsDamage()
-    {
-        var caster = P("guard", 160);
-        var target = E("e1", 100);
-        var ctx = Ctx(caster, target);
-
-        SkillResolver.Resolve(Basic("guard_basic", "physical", GuardBasicDmg), ctx, caster, target,
-            new List<Unit> { caster }, new List<Unit> { target });
-
-        Assert.AreEqual(BasicEnergyDelta, caster.Energy);
-        Assert.AreEqual(BasicUltDelta, caster.Ult);
-        Assert.AreEqual(100 - GuardBasicDmg, target.Hp);
-    }
-
-    // ---------- guard × skill ----------
-    [Test]
-    public void Guard_Skill_CostsEnergy_SelfHeal()
-    {
-        var caster = P("guard", 160);
-        caster.Hp = 80;
-        caster.Energy = SkillEnergyCost;
-        var target = E("e1", 100);
-        var ctx = Ctx(caster, target);
-
-        SkillResolver.Resolve(HealSkill(GuardSkillHeal), ctx, caster, target,
-            new List<Unit> { caster }, new List<Unit> { target });
-
-        Assert.AreEqual(0, caster.Energy);
-        Assert.AreEqual(SkillUltDelta, caster.Ult);
-        Assert.AreEqual(80 + GuardSkillHeal, caster.Hp, "自疗 15");
-        Assert.AreEqual(100, target.Hp, "无伤害目标不应掉血");
-    }
-
-    // ---------- guard × ult ----------
-    [Test]
-    public void Guard_Ult_FullBarResets_HealAll()
-    {
-        var caster = P("guard", 160);
-        caster.Hp = 80;
-        caster.Ult = MaxUltFull;
-        var ally2 = P("ally2", 100);
-        ally2.Hp = 50;
-        var target = E("e1", 100);
-        var ctx = Ctx(caster, ally2, target);
-
-        SkillResolver.Resolve(HealUlt(GuardUltHeal), ctx, caster, target,
-            new List<Unit> { caster, ally2 }, new List<Unit> { target });
-
-        Assert.AreEqual(0, caster.Ult, "满大招应归零");
-        Assert.AreEqual(80 + GuardUltHeal, caster.Hp, "全体治疗含自身");
-        Assert.AreEqual(50 + GuardUltHeal, ally2.Hp, "全体治疗含队友");
-    }
-
-    // ---------- mage × basic ----------
-    [Test]
-    public void Mage_Basic_GainsEnergyAndUlt_DealsDamage()
-    {
-        var caster = P("mage", 80);
-        var target = E("e1", 100);
-        var ctx = Ctx(caster, target);
-
-        SkillResolver.Resolve(Basic("mage_basic", "magic", MageBasicDmg), ctx, caster, target,
-            new List<Unit> { caster }, new List<Unit> { target });
-
-        Assert.AreEqual(BasicEnergyDelta, caster.Energy);
-        Assert.AreEqual(BasicUltDelta, caster.Ult);
-        Assert.AreEqual(100 - MageBasicDmg, target.Hp);
-    }
-
-    // ---------- mage × skill ----------
-    [Test]
-    public void Mage_Skill_CostsEnergy_GainsUlt_DealsDamage()
-    {
-        var caster = P("mage", 80);
-        caster.Energy = SkillEnergyCost;
-        var target = E("e1", 100);
-        var ctx = Ctx(caster, target);
-
-        SkillResolver.Resolve(DamageSkill("mage_skill", "magic", MageSkillDmg), ctx, caster, target,
-            new List<Unit> { caster }, new List<Unit> { target });
-
-        Assert.AreEqual(0, caster.Energy);
-        Assert.AreEqual(SkillUltDelta, caster.Ult);
-        Assert.AreEqual(100 - MageSkillDmg, target.Hp);
-    }
-
-    // ---------- mage × ult ----------
-    [Test]
-    public void Mage_Ult_FullBarResets_DealsDamageToAll()
-    {
-        var caster = P("mage", 80);
-        caster.Ult = MaxUltFull;
-        var e1 = E("e1", 100);
-        var e2 = E("e2", 100);
-        var ctx = Ctx(caster, e1, e2);
-
-        SkillResolver.Resolve(DamageUlt("mage_ult", "magic", MageUltDmg), ctx, caster, e1,
-            new List<Unit> { caster }, new List<Unit> { e1, e2 });
-
-        Assert.AreEqual(0, caster.Ult, "满大招应归零");
-        Assert.AreEqual(100 - MageUltDmg, e1.Hp);
-        Assert.AreEqual(100 - MageUltDmg, e2.Hp);
-    }
-
-    // ---------- gating：能量不足 / 大招未满 ----------
-    [Test]
-    public void Skill_NotEnoughEnergy_DoesNothing()
-    {
-        var caster = P("sword", 100);
-        caster.Energy = SkillEnergyCost - 1;
-        var target = E("e1", 100);
-        var ctx = Ctx(caster, target);
-
-        SkillResolver.Resolve(DamageSkill("sword_skill", "physical", SwordSkillDmg), ctx, caster, target,
-            new List<Unit> { caster }, new List<Unit> { target });
-
-        Assert.AreEqual(SkillEnergyCost - 1, caster.Energy, "能量不足不扣");
-        Assert.AreEqual(0, caster.Ult, "能量不足不攒大");
-        Assert.AreEqual(100, target.Hp, "能量不足不打");
+        var actor = U("actor", Team.Player);
+        var enemy = U("enemy", Team.Enemy);
+        var ctx = Ctx(actor, enemy);
+        var skill = Attack(amount: damage); skill.damage.kind = kind;
+        var result = Cast(ctx, actor, skill);
+        Assert.AreEqual(100 - damage, enemy.Hp);
+        Assert.AreEqual(1, actor.Ult);
+        Assert.AreEqual(1, result.Charges.Count);
+        Assert.AreEqual(1, result.Hits.Count);
+        Assert.AreEqual(1, result.UnitChanges.Single(c => c.UnitId == actor.Id).After.Ult);
     }
 
     [Test]
-    public void Ult_NotFull_DoesNothing()
+    public void Charge_Clamps_And_No_Hit_Does_Not_Charge()
     {
-        var caster = P("sword", 100);
-        caster.Ult = MaxUltFull - 1;
-        var target = E("e1", 100);
-        var ctx = Ctx(caster, target);
-
-        SkillResolver.Resolve(DamageUlt("sword_ult", "physical", SwordUltDmg), ctx, caster, target,
-            new List<Unit> { caster }, new List<Unit> { target });
-
-        Assert.AreEqual(MaxUltFull - 1, caster.Ult, "大招未满不触发不消耗");
-        Assert.AreEqual(100, target.Hp, "大招未满不打");
+        var actor = U("actor", Team.Player); actor.Ult = 2; actor.UltChargeAmount = 9;
+        var enemy = U("enemy", Team.Enemy);
+        var ctx = Ctx(actor, enemy);
+        var result = Cast(ctx, actor, Attack());
+        Assert.AreEqual(3, actor.Ult);
+        Assert.AreEqual(1, result.Charges.Single().Amount);
+        actor.Ult = 0; enemy.Hp = 0;
+        Assert.IsNull(Cast(ctx, actor, Attack()));
+        Assert.AreEqual(0, actor.Ult);
+        Assert.AreEqual(1, ctx.ActionResults.Count);
     }
 
-    // ---------- 集成：从 StreamingAssets 加载三角色全部技能跑通 ----------
     [Test]
-    public void StreamingAssets_Characters_AllSkills_Resolve()
+    public void Shield_Fully_Absorbs_Still_Charges_And_Records_Fact()
     {
-        var result = ConfigLoader.LoadCharacters();
-        Assert.IsEmpty(result.errors);
-        Assert.AreEqual(3, result.items.Count);
+        var actor = U("actor", Team.Player);
+        var enemy = U("enemy", Team.Enemy, trigger: "hit");
+        var ctx = Ctx(actor, enemy);
+        ctx.AddStatus(enemy.Id, new StatusEffect { Type = StatusType.Shield, Amount = 50 });
+        var result = Cast(ctx, actor, Attack());
+        Assert.AreEqual(100, enemy.Hp);
+        Assert.AreEqual(1, enemy.Ult);
+        Assert.AreEqual(1, actor.Ult);
+        Assert.AreEqual(0, result.Hits.Single().HpDamage);
+        Assert.AreEqual(12, result.Hits.Single().ShieldAbsorbed);
+    }
 
-        foreach (var cfg in result.items)
+    [Test]
+    public void Aoe_Attacker_Once_Each_Surviving_Target_Once_Dead_Not_Charged()
+    {
+        var actor = U("actor", Team.Player);
+        var a = U("a", Team.Enemy, trigger: "hit");
+        var b = U("b", Team.Enemy, "front2", "hit");
+        var dead = U("dead", Team.Enemy, "back1", "hit"); dead.Hp = 0;
+        var killed = U("killed", Team.Enemy, "back2", "hit", 5);
+        var result = Cast(Ctx(actor, a, b, dead, killed), actor, Attack(target: "all"));
+        Assert.AreEqual(1, actor.Ult);
+        Assert.AreEqual(1, a.Ult); Assert.AreEqual(1, b.Ult);
+        Assert.AreEqual(0, dead.Ult); Assert.AreEqual(0, killed.Ult);
+        Assert.AreEqual(3, result.Hits.Count);
+        Assert.AreEqual(5, result.Hits.Single(h => h.TargetUnitId == killed.Id).HpDamage);
+    }
+
+    [TestCase(45)]
+    [TestCase(38)]
+    public void Ultimate_Consumes_Full_Charge_No_Self_Charge_But_Victims_Charge(int damage)
+    {
+        var actor = U("actor", Team.Player); actor.Ult = 3;
+        var a = U("a", Team.Enemy, trigger: "hit");
+        var b = U("b", Team.Enemy, "back1", "hit");
+        var result = Cast(Ctx(actor, a, b), actor, Attack("ult", "all", damage));
+        Assert.AreEqual(0, actor.Ult);
+        Assert.AreEqual(100 - damage, a.Hp); Assert.AreEqual(100 - damage, b.Hp);
+        Assert.AreEqual(1, a.Ult); Assert.AreEqual(1, b.Ult);
+        Assert.IsTrue(result.Charges.All(c => c.Trigger == "hit"));
+    }
+
+    [Test]
+    public void Ultimate_Not_Full_Does_Nothing()
+    {
+        var actor = U("actor", Team.Player); actor.Ult = 2;
+        var enemy = U("enemy", Team.Enemy);
+        var ctx = Ctx(actor, enemy);
+        Assert.IsNull(Cast(ctx, actor, Attack("ult")));
+        Assert.AreEqual(2, actor.Ult); Assert.AreEqual(100, enemy.Hp);
+        Assert.IsEmpty(ctx.ActionResults);
+    }
+
+    [Test]
+    public void Single_Uses_Taunt_Snipe_Uses_Explicit_Target()
+    {
+        var actor = U("actor", Team.Player);
+        var front = U("front", Team.Enemy);
+        var back = U("back", Team.Enemy, "back1");
+        var ctx = Ctx(actor, front, back);
+        Cast(ctx, actor, Attack(), back);
+        Assert.AreEqual(88, front.Hp); Assert.AreEqual(100, back.Hp);
+        actor.Ult = 3;
+        Cast(ctx, actor, Attack("ult", "single"), back);
+        Assert.AreEqual(76, front.Hp); Assert.AreEqual(100, back.Hp);
+        actor.Ult = 3;
+        Cast(ctx, actor, Attack("ult", "snipe"), back);
+        Assert.AreEqual(88, back.Hp);
+    }
+
+    [TestCase("snipe")]
+    [TestCase("heal")]
+    public void Illegal_Explicit_Targets_Do_Not_Spend_Or_Create_Action(string mode)
+    {
+        var actor = U("actor", Team.Player); actor.Ult = 3;
+        var ally = U("ally", Team.Player, "back1");
+        var enemy = U("enemy", Team.Enemy);
+        var ctx = Ctx(actor, ally, enemy);
+        var skill = mode == "snipe" ? Attack("ult", "snipe") :
+            new SkillSpec { id = "heal", type = "ult", heal = new HealSpec { target = "single", amount = 20 } };
+        Assert.IsNull(Cast(ctx, actor, skill));
+        Assert.IsNull(Cast(ctx, actor, skill, mode == "snipe" ? ally : enemy));
+        var dead = mode == "snipe" ? enemy : ally; dead.Hp = 0;
+        Assert.IsNull(Cast(ctx, actor, skill, dead));
+        var foreign = U("outsider", mode == "snipe" ? Team.Enemy : Team.Player);
+        Assert.IsNull(Cast(ctx, actor, skill, foreign));
+        Assert.AreEqual(3, actor.Ult); Assert.IsEmpty(ctx.ActionResults);
+    }
+
+    [TestCase("self")]
+    [TestCase("single")]
+    [TestCase("all")]
+    public void Heal_Ultimate_Heals_Living_Allies_Clamps_And_Never_Revives(string mode)
+    {
+        var actor = U("actor", Team.Player); actor.Hp = 80; actor.Ult = 3;
+        var ally = U("ally", Team.Player, "front2"); ally.Hp = 90;
+        var dead = U("dead", Team.Player, "back1"); dead.Hp = 0;
+        var enemy = U("enemy", Team.Enemy);
+        var result = Cast(Ctx(actor, ally, dead, enemy), actor,
+            new SkillSpec { id = "heal", type = "ult", heal = new HealSpec { target = mode, amount = 20 } }, ally);
+        Assert.AreEqual(mode == "single" ? 80 : 100, actor.Hp);
+        Assert.AreEqual(mode == "self" ? 90 : 100, ally.Hp);
+        Assert.AreEqual(0, dead.Hp); Assert.AreEqual(0, actor.Ult);
+        Assert.IsEmpty(result.Hits); Assert.IsEmpty(result.Charges);
+    }
+
+    [Test]
+    public void Multi_Hits_Deduplicate_Charge_And_Stop_Hitting_Dead_Target()
+    {
+        var actor = U("enemy", Team.Enemy);
+        var target = U("target", Team.Player, trigger: "hit");
+        var ctx = Ctx(actor, target);
+        var resolver = new EnemyActionResolver();
+        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "multi", hits = 3, damage = 10 });
+        Assert.AreEqual(70, target.Hp); Assert.AreEqual(1, target.Ult); Assert.AreEqual(1, actor.Ult);
+        Assert.AreEqual(3, ctx.ActionResults.Single().Hits.Count);
+        target.Hp = 5;
+        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "multi", hits = 3, damage = 10 });
+        Assert.AreEqual(1, ctx.ActionResults.Last().Hits.Count);
+        Assert.AreEqual(5, ctx.ActionResults.Last().Hits.Single().HpDamage);
+        Assert.AreEqual(1, target.Ult, "死亡不再充能");
+    }
+
+    [Test]
+    public void Pending_Release_And_Intent_Are_One_Action_One_Charge()
+    {
+        var actor = U("enemy", Team.Enemy);
+        var target = U("target", Team.Player, trigger: "hit");
+        var ctx = Ctx(actor, target);
+        var resolver = new EnemyActionResolver();
+        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "charge", nextDamage = 20 });
+        Assert.AreEqual(0, actor.Ult); Assert.AreEqual(0, target.Ult);
+        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "attack", damage = 10 });
+        Assert.AreEqual(70, target.Hp); Assert.AreEqual(1, actor.Ult); Assert.AreEqual(1, target.Ult);
+        Assert.AreEqual(2, ctx.ActionResults.Count);
+        Assert.AreEqual(2, ctx.ActionResults.Last().Hits.Count);
+        Assert.AreEqual(1, ctx.ActionResults.Last().HitTargetIds.Count);
+    }
+
+    [Test]
+    public void Lethal_Pending_Release_Does_Not_Execute_Followup_Buff()
+    {
+        var actor = U("enemy", Team.Enemy);
+        var target = U("target", Team.Player, trigger: "hit");
+        var ctx = Ctx(actor, target);
+        var resolver = new EnemyActionResolver();
+        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "charge", nextDamage = 500 });
+        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "attackUp", buffPercent = 50 });
+        Assert.IsTrue(target.IsDead); Assert.IsFalse(ctx.HasStatus(actor.Id, StatusType.AttackUp));
+        Assert.AreEqual(0, target.Ult);
+    }
+
+    [Test]
+    public void Pure_Debuff_Charge_Preparation_And_RoundEnd_Do_Not_Charge()
+    {
+        var actor = U("enemy", Team.Enemy);
+        var target = U("target", Team.Player, trigger: "hit");
+        var ctx = Ctx(actor, target);
+        var resolver = new EnemyActionResolver();
+        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "debuff", debuffType = "weaken", debuffPercent = 25 });
+        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "charge", nextDamage = 20 });
+        StatusResolver.RoundEndTick(ctx);
+        Assert.AreEqual(0, actor.Ult); Assert.AreEqual(0, target.Ult);
+        Assert.IsTrue(ctx.ActionResults.All(r => r.Hits.Count == 0 && r.Charges.Count == 0));
+    }
+
+    [Test]
+    public void Result_Is_Immutable_And_Snapshot_Does_Not_Follow_Later_Mutations()
+    {
+        var actor = U("actor", Team.Player);
+        var target = U("target", Team.Enemy, trigger: "hit");
+        var ctx = Ctx(actor, target);
+        ctx.AddStatus(target.Id, new StatusEffect { Type = StatusType.Shield, Amount = 50, Duration = 2 });
+        var result = Cast(ctx, actor, Attack());
+        var after = result.UnitChanges.Single(c => c.UnitId == target.Id).After;
+        target.Hp = 1; target.Ult = 3;
+        ctx.FindStatus(target.Id, StatusType.Shield).Amount = 0;
+        Assert.AreEqual(100, after.Hp); Assert.AreEqual(1, after.Ult);
+        Assert.AreEqual(38, after.Statuses.Single().Amount);
+        Assert.Throws<NotSupportedException>(() => ((IList<AttackHit>)result.Hits).Clear());
+        Assert.Throws<NotSupportedException>(() => ((IList<UnitChange>)result.UnitChanges).Clear());
+        Assert.Throws<NotSupportedException>(() => ((IList<UltCharge>)result.Charges).Clear());
+        Assert.Throws<NotSupportedException>(() => ((IList<StatusSnapshot>)after.Statuses).Clear());
+        Assert.Throws<NotSupportedException>(() => ((IList<string>)result.HitTargetIds).Clear());
+    }
+
+    [Test]
+    public void Hit_Config_Does_Not_Charge_From_Its_Own_Basic_Or_RoundEnd()
+    {
+        var guard = U("guard", Team.Player, trigger: "hit");
+        var enemy = U("enemy", Team.Enemy);
+        var ctx = Ctx(guard, enemy);
+        Cast(ctx, guard, Attack());
+        StatusResolver.RoundEndTick(ctx);
+        Assert.AreEqual(0, guard.Ult);
+    }
+
+    [Test]
+    public void Card_Action_Damage_Does_Not_Grant_Attack_Charge()
+    {
+        var actor = U("actor", Team.Player);
+        var target = U("target", Team.Enemy, trigger: "hit");
+        var ctx = Ctx(actor, target);
+        ctx.BeginAction(BattleEventKind.Card, actor, "damageCard", false);
+        Damage.Apply(ctx, new DamageRequest { SourceUnitId = actor.Id, TargetUnitId = target.Id, Amount = 5 });
+        var result = ctx.CompleteAction();
+        Assert.AreEqual(0, actor.Ult);
+        Assert.AreEqual(1, target.Ult);
+        Assert.AreEqual(1, result.Hits.Count);
+    }
+
+    [Test]
+    public void Skipped_Noninterruptible_Pending_Release_Is_One_Action()
+    {
+        var actor = U("enemy", Team.Enemy);
+        var target = U("target", Team.Player, trigger: "hit");
+        var ctx = Ctx(actor, target);
+        var resolver = new EnemyActionResolver();
+        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "charge", nextDamage = 15, interruptible = false });
+        ctx.AddStatus(actor.Id, new StatusEffect { Type = StatusType.Interrupt, Duration = 1 });
+        resolver.ResolveSkipped(ctx, actor.Id);
+        Assert.AreEqual(85, target.Hp);
+        Assert.AreEqual(1, actor.Ult); Assert.AreEqual(1, target.Ult);
+        Assert.AreEqual(2, ctx.ActionResults.Count);
+        Assert.AreEqual(1, ctx.ActionResults.Last().Hits.Count);
+    }
+
+    [Test]
+    public void Nested_Action_Is_Rejected_Not_Double_Charged()
+    {
+        var actor = U("actor", Team.Player); var enemy = U("enemy", Team.Enemy);
+        var ctx = Ctx(actor, enemy);
+        ctx.BeginAction(BattleEventKind.Card, null, "card", false);
+        Assert.Throws<InvalidOperationException>(() => Cast(ctx, actor, Attack()));
+        var result = ctx.CompleteAction();
+        Assert.IsEmpty(result.Charges); Assert.AreEqual(1, ctx.ActionResults.Count);
+    }
+
+    [Test]
+    public void Resources_Characters_All_Current_Skills_Resolve()
+    {
+        var configs = ConfigLoader.LoadCharacters();
+        Assert.IsEmpty(configs.errors); Assert.AreEqual(3, configs.items.Count);
+        foreach (var cfg in configs.items)
         {
-            var unit = new Unit(cfg.id, Team.Player)
-            {
-                MaxHp = cfg.maxHp, Hp = cfg.maxHp,
-                MaxEnergy = cfg.maxEnergy, MaxUlt = cfg.maxUlt
-            };
-            var allies = new List<Unit> { unit };
-            var enemies = new List<Unit> { E("e1", 100), E("e2", 100) };
-            var ctx = Ctx(unit, enemies[0], enemies[1]);
-
+            Assert.AreEqual(2, cfg.skills.Count);
             foreach (var skill in cfg.skills)
             {
-                if (skill.type == "skill") unit.Energy = cfg.maxEnergy;
+                var unit = U(cfg.id, Team.Player, trigger: cfg.ultChargeTrigger, hp: cfg.maxHp);
+                unit.MaxUlt = cfg.maxUlt; unit.UltChargeAmount = cfg.ultChargeAmount;
                 if (skill.type == "ult") unit.Ult = cfg.maxUlt;
-                Assert.DoesNotThrow(
-                    () => SkillResolver.Resolve(skill, ctx, unit, enemies[0], allies, enemies),
-                    cfg.id + "/" + skill.id);
+                var a = U("a", Team.Enemy); var b = U("b", Team.Enemy, "back1");
+                Assert.IsNotNull(Cast(Ctx(unit, a, b), unit, skill, skill.heal != null ? unit : a), cfg.id + "/" + skill.id);
             }
         }
     }

@@ -2,62 +2,92 @@ using NUnit.Framework;
 using System.Collections.Generic;
 using CQ.Core.Battle;
 using CQ.Core.Combat;
+using CQ.Core.Config;
 
 public class TargetSelectorTests
 {
-    private static Unit U(string id, Team team, int aggro, int hp) =>
-        new Unit(id, team) { MaxHp = hp, Hp = hp, AggroWeight = aggro, Row = team == Team.Player ? "front" : "back" };
+    private static Unit U(string id, string slot, int hp = 10) =>
+        new Unit(id, Team.Player) { MaxHp = 10, Hp = hp, SlotId = slot };
+
+    private static FormationConfig Rules() => new FormationConfig { frontBaseTaunt = 100, backBaseTaunt = 50 };
 
     [Test]
-    public void Front_HighWeight_Picked_More_Than_Back_Across_Seeds()
+    public void Unique_Maximum_Is_Always_Picked_Not_Weighted()
     {
-        int frontPicks = 0;
-        int backPicks = 0;
-
-        for (long seed = 1; seed <= 200; seed++)
+        for (long seed = 1; seed <= 100; seed++)
         {
-            var front = U("front", Team.Player, 3, 10);
-            var back = U("back", Team.Player, 1, 10);
-            var ctx = new CombatContext(new Rng(seed), new List<Unit> { front, back });
-
-            var picked = TargetSelector.PickTarget(ctx, new List<Unit> { front, back });
-            if (picked.Id == "front") frontPicks++;
-            else backPicks++;
-        }
-
-        Assert.Greater(frontPicks, backPicks,
-            $"front 计数 {frontPicks} 应大于 back 计数 {backPicks}");
-    }
-
-    [Test]
-    public void Never_Returns_Dead_Unit()
-    {
-        var dead = U("dead", Team.Player, 100, 0);   // 高权重但已阵亡
-        var alive = U("alive", Team.Player, 1, 10);
-
-        for (long seed = 1; seed <= 50; seed++)
-        {
-            var ctx = new CombatContext(new Rng(seed), new List<Unit> { dead, alive });
-            var picked = TargetSelector.PickTarget(ctx, new List<Unit> { dead, alive });
-
-            Assert.IsNotNull(picked);
-            Assert.IsFalse(picked.IsDead);
-            Assert.AreEqual("alive", picked.Id);
+            var front = U("front", "front1");
+            var back = U("back", "back1");
+            var units = new List<Unit> { back, front };
+            var ctx = new CombatContext(new Rng(seed), units, Rules());
+            Assert.AreSame(front, TargetSelector.PickTarget(ctx, units), "seed=" + seed);
         }
     }
 
     [Test]
-    public void NonPositive_Weight_Counts_As_One()
+    public void Slot_Modifier_Changes_Maximum_Immediately()
     {
-        var a = U("a", Team.Player, 0, 10);
-        var b = U("b", Team.Player, 0, 10);
+        var front = U("front", "front1");
+        var back = U("back", "back1");
+        var units = new List<Unit> { front, back };
+        var ctx = new CombatContext(new Rng(1), units, Rules());
+        Assert.AreSame(front, TargetSelector.PickTarget(ctx, units));
+        ctx.FormationOf(Team.Player).GetSlot("back1").AddModifier(60, 1);
+        Assert.AreSame(back, TargetSelector.PickTarget(ctx, units));
+        ctx.FormationOf(Team.Player).GetSlot("back1").Tick();
+        Assert.AreSame(front, TargetSelector.PickTarget(ctx, units));
+    }
 
-        for (long seed = 1; seed <= 50; seed++)
+    [TestCase(false)]
+    [TestCase(true)]
+    public void Ties_And_AllZero_Are_Seeded_And_Only_Select_Living_Maxima(bool allZero)
+    {
+        var seen = new HashSet<string>();
+        for (long seed = 1; seed <= 64; seed++)
         {
-            var ctx = new CombatContext(new Rng(seed), new List<Unit> { a, b });
-            var picked = TargetSelector.PickTarget(ctx, new List<Unit> { a, b });
-
-            Assert.IsNotNull(picked, "权重 <= 0 视为 1，应始终可选");
+            var a = U("a", "front1");
+            var b = U("b", "front2");
+            var dead = U("dead", "back2", 0);
+            var lower = U("lower", "back1");
+            var units = new List<Unit> { dead, a, lower, b };
+            var config = allZero ? new FormationConfig() : Rules();
+            var first = new CombatContext(new Rng(seed), units, config);
+            var replay = new CombatContext(new Rng(seed), units, config);
+            var candidates = new List<Unit> { dead, a, null, b };
+            if (!allZero) candidates.Add(lower);
+            for (int i = 0; i < 8; i++)
+            {
+                var picked = TargetSelector.PickTarget(first, candidates);
+                Assert.IsNotNull(picked);
+                Assert.That(picked.Id, Is.EqualTo("a").Or.EqualTo("b"));
+                Assert.AreEqual(picked.Id, TargetSelector.PickTarget(replay, candidates).Id);
+                seen.Add(picked.Id);
+            }
         }
+        CollectionAssert.AreEquivalent(new[] { "a", "b" }, seen, "Ties must use seeded RNG, not always the first slot.");
+    }
+
+    [Test]
+    public void Dead_High_Taunt_Is_Excluded_And_Only_Living_Candidate_Is_Returned()
+    {
+        var dead = U("dead", "front1", 0);
+        var alive = U("alive", "back1");
+        var units = new List<Unit> { dead, alive };
+        var ctx = new CombatContext(new Rng(1), units, Rules());
+        ctx.FormationOf(Team.Player).GetSlot("front1").AddModifier(1000, 2);
+        Assert.AreSame(alive, TargetSelector.PickTarget(ctx, units));
+        alive.TakeDamage(alive.Hp);
+        Assert.IsNull(TargetSelector.PickTarget(ctx, units));
+    }
+
+    [Test]
+    public void Null_Empty_And_AllDead_Candidates_Return_Null()
+    {
+        var dead = U("dead", "front1", 0);
+        var ctx = new CombatContext(new Rng(1), new[] { dead });
+        Assert.IsNull(TargetSelector.PickTarget(null, new[] { dead }));
+        Assert.IsNull(TargetSelector.PickTarget(ctx, null));
+        Assert.IsNull(TargetSelector.PickTarget(ctx, new Unit[0]));
+        Assert.IsNull(TargetSelector.PickTarget(ctx, new Unit[] { null, dead }));
     }
 }

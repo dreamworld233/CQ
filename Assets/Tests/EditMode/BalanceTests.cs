@@ -13,15 +13,18 @@ public class BalanceTests
         var cards = ConfigLoader.LoadCards();
         var levels = ConfigLoader.LoadLevels();
         var characters = ConfigLoader.LoadCharacters();
+        var formation = ConfigLoader.LoadFormation();
 
         Assert.IsEmpty(characters.errors);
         Assert.IsEmpty(enemies.errors);
         Assert.IsEmpty(cards.errors);
         Assert.IsEmpty(levels.errors);
+        Assert.IsEmpty(formation.errors);
+        Assert.AreEqual(1, formation.items.Count);
 
         var catalog = enemies.items.ToDictionary(e => e.id);
         var level = levels.items.First(l => l.id == id);
-        return BattleEngine.Create(seed, characters.items, level.waves[0].enemies, catalog, cards.items);
+        return BattleEngine.Create(seed, characters.items, level.waves[0], catalog, cards.items, formation.items[0]);
     }
 
     [Test]
@@ -89,8 +92,16 @@ public class BalanceTests
         var ids = enemies.items.Select(e => e.id).ToHashSet();
         foreach (var level in levels.items)
             foreach (var wave in level.waves)
+            {
+                Assert.IsNotNull(wave.slots, level.name + " 波次缺 slots");
+                Assert.AreEqual(wave.enemies.Length, wave.slots.Length, level.name + " 敌人与槽位须一一对应");
+                Assert.LessOrEqual(wave.enemies.Length, Formation.Capacity);
+                Assert.AreEqual(wave.slots.Length, wave.slots.Distinct().Count(), level.name + " 波次槽位重复");
+                foreach (var slot in wave.slots)
+                    Assert.IsTrue(Formation.IsValidSlot(slot), level.name + " 槽位非法: " + slot);
                 foreach (var enemyId in wave.enemies)
                     Assert.IsTrue(ids.Contains(enemyId), level.name + " 引用了未定义的敌人 " + enemyId);
+            }
     }
 
     [Test]

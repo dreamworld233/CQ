@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using CQ.Core.Cards;
@@ -16,18 +17,11 @@ namespace CQ.Core.Battle
         Finished
     }
 
-    /// <summary>单个玩家本回合的出招计划。</summary>
-    public sealed class SkillPlan
-    {
-        public SkillSpec Skill;
-        public string TargetId;
-    }
-
     /// <summary>
     /// 完整战斗编排器（T7 串联合一）。把所有 resolver 接成一个确定性回合闭环：
-    /// StartBattle → (打牌/选招 输入Phase) → EndRound(速度混排+逐个结算+死亡+胜负+回合末衰减) → 下回合 或 结束。
+    /// StartBattle → (打牌/终结技 输入Phase) → EndRound(速度混排+逐个结算+死亡+胜负+回合末衰减) → 下回合 或 结束。
     /// 卡牌在输入Phase即时生效（打断/虚弱/降速/提速/护盾/攻增），只影响本回合。
-    /// 玩家未选招时默认普攻（首个存活敌人），敌人按意图循环结算、被打断跳过并对可打断蓄力一并取消。
+    /// 玩家正常行动自动普攻（最高有效嘲讽敌人），敌人按意图循环结算、被打断跳过并对可打断蓄力一并取消。
     /// </summary>
     public sealed class BattleEngine
     {
@@ -48,7 +42,8 @@ namespace CQ.Core.Battle
         public IReadOnlyList<string> Hand => Deck.Hand;
 
         /// <summary>最近一次结算产生的动作事件（表现层逐条播报）。每回合开局清空，输入阶段打牌会追加。</summary>
-        public IReadOnlyList<BattleEvent> RoundEvents => _events;
+        public IReadOnlyList<BattleEvent> RoundEvents => _events.AsReadOnly();
+        public IReadOnlyList<ActionResult> ActionResults => Ctx.ActionResults;
 
         /// <summary>本回合当前出手顺序（按需速度混排，输入阶段即最新；行动条读此）。</summary>
         public IReadOnlyList<Unit> CurrentOrder
@@ -64,10 +59,8 @@ namespace CQ.Core.Battle
         private readonly Dictionary<string, EnemyConfig> _enemyCfgs;
         private readonly Dictionary<string, CardConfig> _cards;
         private readonly Dictionary<string, IntentModel> _intents;
-        private readonly Dictionary<string, SkillPlan> _plan = new Dictionary<string, SkillPlan>();
         private readonly EnemyActionResolver _enemyResolver = new EnemyActionResolver();
         private readonly TurnManager _turns;
-        private readonly Dictionary<string, string> _lockedTargets = new Dictionary<string, string>();
         private readonly List<BattleEvent> _events = new List<BattleEvent>();
         private IReadOnlyList<Unit> _lastOrder = new List<Unit>();
         private bool _started;
@@ -78,7 +71,8 @@ namespace CQ.Core.Battle
             IReadOnlyList<Unit> enemies,
             IReadOnlyDictionary<string, CharacterConfig> chars,
             IReadOnlyDictionary<string, EnemyConfig> enemyCfgs,
-            IEnumerable<CardConfig> cards)
+            IEnumerable<CardConfig> cards,
+            FormationConfig formationConfig = null)
         {
             Rng = rng;
             Players = players;
@@ -93,7 +87,15 @@ namespace CQ.Core.Battle
             var all = new List<Unit>();
             all.AddRange(players);
             all.AddRange(enemies);
-            Ctx = new CombatContext(rng, all);
+            Ctx = new CombatContext(rng, all, formationConfig);
+
+            foreach (var player in players)
+                if (_chars.TryGetValue(player.Id, out var character))
+                {
+                    player.MaxUlt = character.maxUlt;
+                    player.UltChargeTrigger = character.ultChargeTrigger;
+                    player.UltChargeAmount = character.ultChargeAmount;
+                }
 
             _intents = new Dictionary<string, IntentModel>();
             foreach (var e in enemies)
@@ -110,8 +112,14 @@ namespace CQ.Core.Battle
             IEnumerable<CharacterConfig> characters,
             IReadOnlyList<string> waveEnemyIds,
             IReadOnlyDictionary<string, EnemyConfig> enemyCatalog,
-            IEnumerable<CardConfig> cards)
+            IEnumerable<CardConfig> cards,
+            IReadOnlyList<string> enemySlots = null,
+            FormationConfig formationConfig = null)
         {
+            if (waveEnemyIds == null) throw new ArgumentNullException(nameof(waveEnemyIds));
+            if (waveEnemyIds.Count > Formation.Capacity) throw new ArgumentException("敌人超过五格容量", nameof(waveEnemyIds));
+            if (enemySlots != null && enemySlots.Count != waveEnemyIds.Count)
+                throw new ArgumentException("enemySlots 必须与敌人列表等长", nameof(enemySlots));
             var rng = new Rng(seed);
 
             var players = new List<Unit>();
@@ -127,13 +135,28 @@ namespace CQ.Core.Battle
             var enemyByUnit = new Dictionary<string, EnemyConfig>();
             for (int i = 0; i < waveEnemyIds.Count; i++)
             {
-                if (!enemyCatalog.TryGetValue(waveEnemyIds[i], out var cfg)) continue;
+                if (!enemyCatalog.TryGetValue(waveEnemyIds[i], out var cfg))
+                    throw new ArgumentException("敌人配置不存在: " + waveEnemyIds[i], nameof(waveEnemyIds));
                 string unitId = cfg.id + "_" + i;
-                enemies.Add(BuildEnemy(cfg, unitId));
+                enemies.Add(BuildEnemy(cfg, unitId, enemySlots == null ? Formation.SlotIdAt(i) : enemySlots[i]));
                 enemyByUnit[unitId] = cfg;
             }
 
-            return new BattleEngine(rng, players, enemies, charById, enemyByUnit, cards);
+            return new BattleEngine(rng, players, enemies, charById, enemyByUnit, cards, formationConfig);
+        }
+
+        public static BattleEngine Create(
+            long seed,
+            IEnumerable<CharacterConfig> characters,
+            WaveConfig wave,
+            IReadOnlyDictionary<string, EnemyConfig> enemyCatalog,
+            IEnumerable<CardConfig> cards,
+            FormationConfig formationConfig = null)
+        {
+            if (wave == null) throw new ArgumentNullException(nameof(wave));
+            var error = ConfigValidator.ValidateLevel(new LevelConfig { id = 1, waves = new List<WaveConfig> { wave } });
+            if (error != null) throw new ArgumentException(error, nameof(wave));
+            return Create(seed, characters, wave.enemies, enemyCatalog, cards, wave.slots, formationConfig);
         }
 
         private static Unit BuildPlayer(CharacterConfig c) => new Unit(c.id, Team.Player)
@@ -142,24 +165,20 @@ namespace CQ.Core.Battle
             Hp = c.maxHp,
             MaxHp = c.maxHp,
             BaseSpeed = c.baseSpeed,
-            Row = c.row,
-            AggroWeight = c.aggroWeight,
-            Energy = 0,
-            MaxEnergy = c.maxEnergy,
+            SlotId = c.defaultSlot,
+            UltChargeTrigger = c.ultChargeTrigger,
+            UltChargeAmount = c.ultChargeAmount,
             Ult = 0,
             MaxUlt = c.maxUlt
         };
 
-        private static Unit BuildEnemy(EnemyConfig c, string unitId) => new Unit(unitId, Team.Enemy)
+        private static Unit BuildEnemy(EnemyConfig c, string unitId, string slotId) => new Unit(unitId, Team.Enemy)
         {
             Name = c.name,
             Hp = c.maxHp,
             MaxHp = c.maxHp,
             BaseSpeed = c.baseSpeed,
-            Row = c.row,
-            AggroWeight = c.aggroWeight,
-            Energy = 0,
-            MaxEnergy = 0,
+            SlotId = slotId,
             Ult = 0,
             MaxUlt = 0
         };
@@ -169,37 +188,9 @@ namespace CQ.Core.Battle
         {
             if (_started) return;
             _started = true;
-            BeginRound();
-            Flow = BattleFlow.Input;
-        }
-
-        private void BeginRound()
-        {
-            _plan.Clear();
             _lastOrder = new List<Unit>();
-            LockIntentTargets();
             Deck.Draw(1);
-        }
-
-        /// <summary>亮意图时预锁单体攻击/连击/蓄力/减益的目标（同 seed 确定）。</summary>
-        private void LockIntentTargets()
-        {
-            _lockedTargets.Clear();
-            var players = AlivePlayers();
-            foreach (var e in Enemies)
-            {
-                if (e.IsDead) continue;
-                var intent = CurrentIntentOf(e.Id);
-                if (intent == null || !NeedsTarget(intent)) continue;
-                var t = TargetSelector.PickTarget(Ctx, players);
-                if (t != null) _lockedTargets[e.Id] = t.Id;
-            }
-        }
-
-        private static bool NeedsTarget(IntentConfig intent)
-        {
-            if (intent.type == "multi" || intent.type == "charge" || intent.type == "debuff") return true;
-            return intent.type == "attack" && intent.target == "single";
+            Flow = BattleFlow.Input;
         }
 
         private bool InputOpen => _started && !IsFinished && Flow == BattleFlow.Input;
@@ -210,36 +201,36 @@ namespace CQ.Core.Battle
             if (!InputOpen || Ctx.GetUnit(targetUnitId) == null) return false;
             string cardId = Deck.Play(handIndex);
             if (cardId == null || !_cards.TryGetValue(cardId, out var cfg)) return false;
-            var before = SnapshotHp();
+            Ctx.BeginAction(BattleEventKind.Card, null, cardId, false);
             CardEffectResolver.Resolve(cfg.effect, Ctx, targetUnitId, CardSourceId);
-            Record(BattleEventKind.Card, null, cardId, before);
+            Record(Ctx.CompleteAction());
+            CheckWinner();
             return true;
         }
 
-        /// <summary>登记某玩家本回合出招。能量/大招不足或目标非法则不登记，返回 false。</summary>
-        public bool ChooseSkill(string charId, string skillId, string targetUnitId)
+        public bool UseUltimate(string charId, string targetUnitId = null)
         {
             if (!InputOpen) return false;
             var unit = Ctx.GetUnit(charId);
-            if (unit == null || unit.IsDead || unit.Team != Team.Player) return false;
-            if (!_chars.TryGetValue(charId, out var cfg)) return false;
-            var skill = FindSkill(cfg, skillId);
-            if (skill == null || !SkillResolver.CanUse(skill, unit)) return false;
-            if (!TargetAllowed(skill, targetUnitId)) return false;
-            _plan[charId] = new SkillPlan { Skill = skill, TargetId = targetUnitId };
+            var skill = UltimateOf(charId);
+            if (unit == null || unit.Team != Team.Player || skill == null) return false;
+            var result = SkillResolver.Resolve(skill, Ctx, unit, Ctx.GetUnit(targetUnitId), AlivePlayers(), AliveEnemies());
+            if (result == null) return false;
+            Record(result);
+            CheckWinner();
             return true;
         }
 
-        /// <summary>目标合法性：单目标治疗须友方，单目标伤害须敌方；全目标/自愈忽略选择。</summary>
-        private bool TargetAllowed(SkillSpec skill, string targetUnitId)
-        {
-            bool needsAlly = skill.heal != null && skill.heal.target == "single";
-            bool needsEnemy = skill.damage != null && skill.damage.target == "single";
-            if (!needsAlly && !needsEnemy) return true;
+        public SkillSpec UltimateOf(string charId) =>
+            _chars.TryGetValue(charId, out var cfg) ? cfg.skills?.Find(s => s.type == "ult") : null;
 
-            var target = Ctx.GetUnit(targetUnitId);
-            if (target == null || target.IsDead) return false;
-            return needsAlly ? target.Team == Team.Player : target.Team == Team.Enemy;
+        public bool CanUseUltimate(string charId) =>
+            InputOpen && SkillResolver.CanUse(UltimateOf(charId), Ctx.GetUnit(charId));
+
+        private void CheckWinner()
+        {
+            _turns.CheckWinner();
+            if (_turns.IsFinished) Flow = BattleFlow.Finished;
         }
 
         /// <summary>结束输入，跑本回合闭环。返回本回合出手顺序（含排序时存活单位）。</summary>
@@ -250,6 +241,7 @@ namespace CQ.Core.Battle
 
             _events.Clear();
             _lastOrder = _turns.RunRound(ActUnit);
+            StatusResolver.RoundEndTick(Ctx);
 
             if (_turns.IsFinished)
             {
@@ -257,8 +249,7 @@ namespace CQ.Core.Battle
             }
             else
             {
-                StatusResolver.RoundEndTick(Ctx);
-                BeginRound();
+                Deck.Draw(1);
                 Flow = BattleFlow.Input;
             }
             return _lastOrder;
@@ -268,91 +259,31 @@ namespace CQ.Core.Battle
         {
             if (unit == null || unit.IsDead) return;
 
-            // 事件描述须在结算前取：敌人意图游标在结算后前进，玩家的 plan 在结算后不再代表本次动作。
-            BattleEventKind kind;
-            string actionId;
-            if (unit.Team == Team.Player)
-            {
-                kind = BattleEventKind.Skill;
-                actionId = _plan.TryGetValue(unit.Id, out var p) && p != null && p.Skill != null
-                    ? p.Skill.id
-                    : BasicSkillIdOf(unit);
-            }
-            else
-            {
-                kind = BattleEventKind.Intent;
-                actionId = CurrentIntentOf(unit.Id)?.type ?? "unknown";
-            }
-
-            var before = SnapshotHp();
+            int count = Ctx.ActionResults.Count;
             if (unit.Team == Team.Player) ActPlayer(unit);
             else ActEnemy(unit);
-            Record(kind, unit.Id, actionId, before);
+            for (int i = count; i < Ctx.ActionResults.Count; i++) Record(Ctx.ActionResults[i]);
         }
 
-        private string BasicSkillIdOf(Unit unit)
-        {
-            if (!_chars.TryGetValue(unit.Id, out var cfg) || cfg.skills == null) return "basic";
-            foreach (var s in cfg.skills)
-                if (s.type == "basic") return s.id;
-            return "basic";
-        }
-
-        private Dictionary<string, int> SnapshotHp()
-        {
-            var map = new Dictionary<string, int>(Ctx.Units.Count);
-            foreach (var u in Ctx.Units) map[u.Id] = u.Hp;
-            return map;
-        }
-
-        /// <summary>按结算前后血量差记事件：每个有变化的单位一条；无变化则记一条 HpDelta = 0。</summary>
-        private void Record(BattleEventKind kind, string actorId, string actionId, Dictionary<string, int> before)
+        private void Record(ActionResult result)
         {
             bool any = false;
-            foreach (var u in Ctx.Units)
+            foreach (var change in result.UnitChanges)
             {
-                if (!before.TryGetValue(u.Id, out int hp0)) continue;
-                int delta = u.Hp - hp0;
-                if (delta == 0) continue;
+                if (change.HpDelta == 0) continue;
                 any = true;
-                _events.Add(new BattleEvent
-                {
-                    Kind = kind,
-                    ActorId = actorId,
-                    ActionId = actionId,
-                    TargetId = u.Id,
-                    HpDelta = delta,
-                    TargetDead = u.IsDead
-                });
+                _events.Add(new BattleEvent { Kind = result.Kind, ActorId = result.ActorId, ActionId = result.ActionId,
+                    TargetId = change.UnitId, HpDelta = change.HpDelta, TargetDead = change.After.IsDead });
             }
-
-            if (!any)
-                _events.Add(new BattleEvent
-                {
-                    Kind = kind,
-                    ActorId = actorId,
-                    ActionId = actionId,
-                    TargetId = actorId,
-                    HpDelta = 0
-                });
+            if (!any) _events.Add(new BattleEvent { Kind = result.Kind, ActorId = result.ActorId,
+                ActionId = result.ActionId, TargetId = result.ActorId });
         }
 
         private void ActPlayer(Unit unit)
         {
-            if (!_plan.TryGetValue(unit.Id, out var plan) || plan == null || plan.Skill == null)
-                plan = DefaultBasicPlan(unit);
-            if (plan == null || plan.Skill == null) return;
-
-            SkillResolver.Resolve(plan.Skill, Ctx, unit, Ctx.GetUnit(plan.TargetId), AlivePlayers(), AliveEnemies());
-        }
-
-        private SkillPlan DefaultBasicPlan(Unit unit)
-        {
-            if (!_chars.TryGetValue(unit.Id, out var cfg)) return null;
-            foreach (var s in cfg.skills)
-                if (s.type == "basic")
-                    return new SkillPlan { Skill = s, TargetId = FirstAliveEnemy()?.Id };
-            return null;
+            if (!_chars.TryGetValue(unit.Id, out var cfg)) return;
+            var basic = cfg.skills?.Find(s => s.type == "basic");
+            SkillResolver.Resolve(basic, Ctx, unit, null, AlivePlayers(), AliveEnemies());
         }
 
         private void ActEnemy(Unit unit)
@@ -366,29 +297,11 @@ namespace CQ.Core.Battle
                 return;
             }
 
-            _lockedTargets.TryGetValue(unit.Id, out var lockedTargetId);
-            _enemyResolver.Resolve(Ctx, unit.Id, model, lockedTargetId);
+            _enemyResolver.Resolve(Ctx, unit.Id, model);
         }
 
-        private Unit FirstAliveEnemy() => Enemies.FirstOrDefault(e => !e.IsDead);
         private List<Unit> AlivePlayers() => Players.Where(p => !p.IsDead).ToList();
         private List<Unit> AliveEnemies() => Enemies.Where(e => !e.IsDead).ToList();
-
-        private static SkillSpec FindSkill(CharacterConfig cfg, string skillId)
-        {
-            if (cfg == null || cfg.skills == null) return null;
-            foreach (var s in cfg.skills)
-                if (s.id == skillId) return s;
-            return null;
-        }
-
-        public bool CanUseSkill(string charId, string skillId)
-        {
-            var unit = Ctx.GetUnit(charId);
-            if (unit == null) return false;
-            if (!_chars.TryGetValue(charId, out var cfg)) return false;
-            return SkillResolver.CanUse(FindSkill(cfg, skillId), unit);
-        }
 
         public IReadOnlyList<SkillSpec> SkillsOf(string charId) =>
             _chars.TryGetValue(charId, out var c) ? c.skills : null;
@@ -397,9 +310,6 @@ namespace CQ.Core.Battle
             _intents.TryGetValue(enemyId, out var m) ? m : null;
 
         public IntentConfig CurrentIntentOf(string enemyId) => GetIntent(enemyId)?.CurrentIntent;
-
-        public string GetIntentTarget(string enemyId) =>
-            _lockedTargets.TryGetValue(enemyId, out var t) ? t : null;
 
         public CardConfig GetCard(string cardId) =>
             _cards.TryGetValue(cardId, out var c) ? c : null;

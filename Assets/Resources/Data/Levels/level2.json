@@ -1,1 +1,1 @@
-{ "id": 2, "name": "领主", "waves": [ { "enemies": ["lord"] } ] }
+{ "id": 2, "name": "领主", "waves": [ { "enemies": ["lord"], "slots": ["front1"] } ] }

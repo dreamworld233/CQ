@@ -14,13 +14,12 @@ public class IntentFlowTests
         role = "dps",
         maxHp = 100,
         baseSpeed = 10,
-        maxEnergy = 3,
+        ultChargeTrigger = "attack", ultChargeAmount = 1,
         maxUlt = 3,
-        row = "front",
-        aggroWeight = 2,
+        defaultSlot = "front1",
         skills = new List<SkillSpec>
         {
-            new SkillSpec { id = "sword_basic", name = "普攻", type = "basic", energyDelta = 1, ultDelta = 1,
+            new SkillSpec { id = "sword_basic", name = "普攻", type = "basic",
                 damage = new DamageSpec { kind = "physical", target = "single", amount = 12 } }
         }
     };
@@ -31,8 +30,6 @@ public class IntentFlowTests
         name = "领主",
         maxHp = 300,
         baseSpeed = 5,
-        row = "front",
-        aggroWeight = 2,
         intentSequence = new[] { "charge", "attack" },
         intents = new List<IntentConfig>
         {
@@ -47,8 +44,6 @@ public class IntentFlowTests
         name = "沙包",
         maxHp = 99999,
         baseSpeed = 1,
-        row = "front",
-        aggroWeight = 2,
         intentSequence = new[] { "attack" },
         intents = new List<IntentConfig>
         {
@@ -64,17 +59,98 @@ public class IntentFlowTests
         var enemyList = enemies.ToList();
         var ids = enemyList.Select(e => e.id).ToList();
         var catalog = enemyList.ToDictionary(e => e.id);
-        return BattleEngine.Create(seed, chars, ids, catalog, cards);
+        return BattleEngine.Create(seed, chars, ids, catalog, cards,
+            formationConfig: new FormationConfig { frontBaseTaunt = 100, backBaseTaunt = 50 });
+    }
+
+    private static CharacterConfig Fighter(string id, string slot)
+    {
+        var config = Sword();
+        config.id = id;
+        config.defaultSlot = slot;
+        return config;
+    }
+
+    private static EnemyConfig Attacker(string type = "attack", string target = "single")
+    {
+        var config = Bag();
+        config.intentSequence = new[] { "hit" };
+        config.intents = new List<IntentConfig>
+        {
+            new IntentConfig { id = "hit", type = type, target = target, damage = 25, hits = 3 }
+        };
+        return config;
+    }
+
+    [TestCase("attack", 25)]
+    [TestCase("multi", 75)]
+    public void Revealed_Intent_Targets_Execution_Maximum_And_Records_Actual_Target(string type, int damage)
+    {
+        var eng = Make(7, new[] { Fighter("front", "front1"), Fighter("back", "back1") }, new[] { Attacker(type) });
+        eng.StartBattle();
+        string enemyId = eng.Enemies[0].Id;
+        Assert.AreEqual("hit", eng.GetIntent(enemyId).CurrentIntentId);
+        eng.Ctx.FormationOf(Team.Player).GetSlot("back1").AddModifier(60, 1);
+
+        eng.EndRound();
+
+        Assert.AreEqual(100, eng.Ctx.GetUnit("front").Hp);
+        Assert.AreEqual(100 - damage, eng.Ctx.GetUnit("back").Hp);
+        var events = eng.RoundEvents.Where(e => e.Kind == BattleEventKind.Intent && e.ActorId == enemyId).ToList();
+        Assert.AreEqual(1, events.Count);
+        Assert.AreEqual(type, events[0].ActionId);
+        Assert.AreEqual("back", events[0].TargetId);
+        Assert.AreEqual(-damage, events[0].HpDelta);
+        Assert.IsFalse(events[0].TargetDead);
+    }
+
+    [Test]
+    public void Dead_Revealed_Maximum_Is_Not_Targeted_And_Lethal_Event_Is_Accurate()
+    {
+        var enemy = Attacker();
+        enemy.intents[0].damage = 150;
+        var eng = Make(7, new[] { Fighter("front", "front1"), Fighter("back", "back1") }, new[] { enemy });
+        eng.StartBattle();
+        eng.Ctx.GetUnit("front").TakeDamage(100);
+        eng.EndRound();
+        var hit = eng.RoundEvents.Single(e => e.Kind == BattleEventKind.Intent && e.HpDelta < 0);
+        Assert.AreEqual(eng.Enemies[0].Id, hit.ActorId);
+        Assert.AreEqual("attack", hit.ActionId);
+        Assert.AreEqual("back", hit.TargetId);
+        Assert.AreEqual(-100, hit.HpDelta, "Record actual HP loss, not overkill damage.");
+        Assert.IsTrue(hit.TargetDead);
+        Assert.AreEqual(0, eng.Ctx.GetUnit("front").Hp);
+    }
+
+    [Test]
+    public void Aoe_Events_Record_Each_Living_Target_Regardless_Of_Taunt()
+    {
+        var eng = Make(7, new[] { Fighter("front", "front1"), Fighter("back", "back1"), Fighter("dead", "back2") },
+            new[] { Attacker(target: "all") });
+        eng.StartBattle();
+        eng.Ctx.GetUnit("dead").TakeDamage(100);
+        eng.Ctx.FormationOf(Team.Player).GetSlot("back1").AddModifier(1000, 1);
+        eng.EndRound();
+        var events = eng.RoundEvents.Where(e => e.Kind == BattleEventKind.Intent).ToList();
+        Assert.AreEqual(2, events.Count);
+        CollectionAssert.AreEquivalent(new[] { "front", "back" }, events.Select(e => e.TargetId));
+        foreach (var hit in events)
+        {
+            Assert.AreEqual(eng.Enemies[0].Id, hit.ActorId);
+            Assert.AreEqual("attack", hit.ActionId);
+            Assert.AreEqual(-25, hit.HpDelta);
+            Assert.IsFalse(hit.TargetDead);
+        }
     }
 
     // T9.1 意图完整结算：AOE（attack target=all）打全体存活玩家
     [Test]
     public void Aoe_Intent_Hits_All_Living_Players()
     {
-        var e = new Unit("e", Team.Enemy) { MaxHp = 100, Hp = 100 };
-        var p1 = new Unit("p1", Team.Player) { MaxHp = 100, Hp = 100, AggroWeight = 1 };
-        var p2 = new Unit("p2", Team.Player) { MaxHp = 100, Hp = 100, AggroWeight = 1 };
-        var p3 = new Unit("p3", Team.Player) { MaxHp = 100, Hp = 100, AggroWeight = 1 };
+        var e = new Unit("e", Team.Enemy) { MaxHp = 100, Hp = 100, SlotId = "front1" };
+        var p1 = new Unit("p1", Team.Player) { MaxHp = 100, Hp = 100, SlotId = "front1" };
+        var p2 = new Unit("p2", Team.Player) { MaxHp = 100, Hp = 100, SlotId = "front2" };
+        var p3 = new Unit("p3", Team.Player) { MaxHp = 100, Hp = 100, SlotId = "back1" };
         var ctx = new CombatContext(new Rng(1), new List<Unit> { e, p1, p2, p3 });
 
         var aoe = new IntentConfig { id = "aoe", type = "attack", target = "all", damage = 25 };

@@ -14,8 +14,8 @@ public class CardEffectResolverTests
         var rng = new Rng(1);
         var units = new List<Unit>
         {
-            new Unit("source", Team.Player),
-            new Unit("target", Team.Enemy)
+            new Unit("source", Team.Player) { SlotId = "front1" },
+            new Unit("target", Team.Enemy) { SlotId = "front1" }
         };
         return new CombatContext(rng, units);
     }

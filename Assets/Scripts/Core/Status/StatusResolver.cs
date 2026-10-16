@@ -68,6 +68,8 @@ namespace CQ.Core.Status
             }
 
             ctx.Haste.Clear();
+            ctx.FormationOf(Team.Player).Tick();
+            ctx.FormationOf(Team.Enemy).Tick();
         }
     }
 }

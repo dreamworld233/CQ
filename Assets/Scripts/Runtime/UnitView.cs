@@ -5,7 +5,7 @@ using UnityEngine;
 namespace CQ.Runtime
 {
     /// <summary>
-    /// 世界单位表现：示意图 sprite（缺图回退纯色块）+ 加粗血条/能量条/大招条 + 条上数值
+    /// 世界单位表现：示意图 sprite（缺图回退纯色块）+ 加粗血条/终结技条 + 条上数值
     /// + 敌人意图图标 + 选中高亮方框 + 受击闪白/抖动。附 BoxCollider2D 供点选。
     /// 布局全部用世界单位常量；文字用「目标世界高度」定标（TmpKit.FitWorldHeight）。
     /// </summary>
@@ -25,12 +25,11 @@ namespace CQ.Runtime
         private const float HpY = -1.00f;          // 血条 y
         private const float HpBgH = 0.42f;         // 血条底框高
         private const float HpFillH = 0.30f;       // 血条填充高
-        private const float EnergyY = -1.34f;      // 能量条 y（仅我方）
         private const float UltY = -1.52f;         // 大招条 y（仅我方）
-        private const float SubBgH = 0.20f;        // 能量/大招底框高
-        private const float SubFillH = 0.12f;      // 能量/大招填充高
+        private const float SubBgH = 0.20f;        // 终结技底框高
+        private const float SubFillH = 0.12f;      // 终结技填充高
         private const float LabelY = -1.80f;       // 名字 y
-        private const float StatY = -2.06f;        // 能/大 数值 y（仅我方）
+        private const float StatY = -2.06f;        // 终结技数值 y（仅我方）
         private const float FloatY = 2.05f;        // 飘字起始 y
 
         private const float HpTextH = 0.30f;       // 血条上数值的目标世界高
@@ -58,7 +57,6 @@ namespace CQ.Runtime
         private bool _teamTint;
 
         private SpriteRenderer _hpFill;
-        private SpriteRenderer _energyFill;
         private SpriteRenderer _ultFill;
 
         private Color _tint = Color.white;
@@ -129,7 +127,6 @@ namespace CQ.Runtime
 
             if (unit.Team == Team.Player)
             {
-                SetFill(_energyFill, unit.MaxEnergy > 0 ? (float)unit.Energy / unit.MaxEnergy : 0f, BarW - BarInset);
                 SetFill(_ultFill, unit.MaxUlt > 0 ? (float)unit.Ult / unit.MaxUlt : 0f, BarW - BarInset);
             }
 
@@ -144,7 +141,7 @@ namespace CQ.Runtime
 
             if (_stat != null && unit.Team == Team.Player)
             {
-                _stat.text = "能 " + unit.Energy + "/" + unit.MaxEnergy + "  大 " + unit.Ult + "/" + unit.MaxUlt;
+                _stat.text = "终结技 " + unit.Ult + "/" + unit.MaxUlt;
                 TmpKit.FitWorldHeight(_stat, StatTextH);
             }
 
@@ -242,7 +239,7 @@ namespace CQ.Runtime
 
         // ---------- 构建 ----------
 
-        /// <summary>血条（双方，带底框/刻度/条上数值）+ 能量条/大招条（仅我方）。纯代码，不依赖素材。</summary>
+        /// <summary>血条（双方，带底框/刻度/条上数值）+ 终结技条（仅我方）。纯代码，不依赖素材。</summary>
         private void MakeBars(bool isPlayer)
         {
             MakeBar("HpBg", HpY, HpBgH, BarW, new Color(0.05f, 0.06f, 0.09f, 0.98f), 35);
@@ -263,13 +260,11 @@ namespace CQ.Runtime
 
             if (!isPlayer) return;
 
-            MakeBar("EnergyBg", EnergyY, SubBgH, BarW, new Color(0.05f, 0.06f, 0.09f, 0.98f), 35);
-            _energyFill = MakeBar("EnergyFill", EnergyY, SubFillH, BarW - BarInset, new Color(0.35f, 0.8f, 1f), 36);
             MakeBar("UltBg", UltY, SubBgH, BarW, new Color(0.05f, 0.06f, 0.09f, 0.98f), 35);
             _ultFill = MakeBar("UltFill", UltY, SubFillH, BarW - BarInset, new Color(1f, 0.85f, 0.25f), 36);
 
             _stat = TmpKit.MakeWorldText(transform, "StatText", new Vector3(0f, StatY, 0f),
-                UiKit.FontBold, StatTextH, new Color(0.75f, 0.92f, 1f), 55, FontStyles.Normal, "能 0/0  大 0/0");
+                UiKit.FontBold, StatTextH, new Color(0.75f, 0.92f, 1f), 55, FontStyles.Normal, "终结技 0/0");
             TmpKit.SetOutline(_stat, new Color(0f, 0f, 0f, 0.9f), 0.2f);
         }
 

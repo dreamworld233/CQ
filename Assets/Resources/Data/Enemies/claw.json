@@ -3,8 +3,6 @@
   "name": "爪牙",
   "maxHp": 60,
   "baseSpeed": 7,
-  "row": "front",
-  "aggroWeight": 2,
   "intentSequence": ["slash", "multi"],
   "intents": [
     { "id": "slash", "type": "attack", "target": "single", "damage": 10 },

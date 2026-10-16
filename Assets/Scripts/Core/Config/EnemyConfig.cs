@@ -27,8 +27,6 @@ namespace CQ.Core.Config
         public string name;
         public int maxHp;
         public int baseSpeed;
-        public string row;        // front | back
-        public int aggroWeight;
         public string[] intentSequence;
         public List<IntentConfig> intents;
     }

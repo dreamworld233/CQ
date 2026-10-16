@@ -40,8 +40,10 @@ namespace CQ.Core.Combat
             result.ShieldAbsorbed = absorbed;
             result.FinalDamage = dmg;
 
+            int hpBefore = target.Hp;
             target.TakeDamage(dmg);
             result.TargetDead = target.IsDead;
+            ctx.RecordHit(source.Id, target.Id, hpBefore - target.Hp, absorbed, target.IsDead);
             return result;
         }
     }

@@ -1,133 +1,69 @@
 using System.Collections.Generic;
+using CQ.Core.Battle;
 using CQ.Core.Config;
 
 namespace CQ.Core.Combat
 {
-    /// <summary>
-    /// 角色技能解析器（T3）：basic / skill / ult 三循环 + 能量/大招条。
-    /// 能量/大招条改动只走 GainEnergy / GainUlt；一切数值来自 SkillSpec 与 Unit.MaxEnergy / MaxUlt，零硬编码。
-    /// </summary>
     public static class SkillResolver
     {
-        /// <summary>本技能当前是否可释放（能量/大招条门槛，数值全来自配置与 Unit.Max*）。</summary>
-        public static bool CanUse(SkillSpec skill, Unit caster)
+        public static bool CanUse(SkillSpec skill, Unit caster) =>
+            skill != null && caster != null && !caster.IsDead &&
+            (skill.type == "basic" || (skill.type == "ult" && caster.MaxUlt > 0 && caster.Ult >= caster.MaxUlt));
+
+        private static bool Contains(IReadOnlyList<Unit> units, Unit target)
         {
-            if (skill == null || caster == null || caster.IsDead) return false;
-            switch (skill.type)
-            {
-                case "basic": return true;
-                case "skill": return caster.Energy >= skill.energyCost;
-                case "ult": return caster.Ult >= caster.MaxUlt;
-                default: return false;
-            }
+            if (target == null || target.IsDead || units == null) return false;
+            foreach (var unit in units) if (ReferenceEquals(unit, target)) return true;
+            return false;
         }
 
-        public static void Resolve(
-            SkillSpec skill,
-            CombatContext ctx,
-            Unit caster,
-            Unit target,
-            IReadOnlyList<Unit> allies,
-            IReadOnlyList<Unit> enemies)
-        {
-            if (skill == null || caster == null) return;
-
-            switch (skill.type)
-            {
-                case "basic":
-                    ResolveBasic(skill, ctx, caster, target, enemies);
-                    break;
-                case "skill":
-                    ResolveSkill(skill, ctx, caster, target, allies, enemies);
-                    break;
-                case "ult":
-                    ResolveUlt(skill, ctx, caster, target, allies, enemies);
-                    break;
-            }
-        }
-
-        private static void ResolveBasic(
-            SkillSpec skill, CombatContext ctx, Unit caster, Unit target, IReadOnlyList<Unit> enemies)
-        {
-            caster.GainEnergy(skill.energyDelta);
-            caster.GainUlt(skill.ultDelta);
-            ApplyDamage(skill, ctx, caster, target, enemies);
-        }
-
-        private static void ResolveSkill(
-            SkillSpec skill, CombatContext ctx, Unit caster, Unit target,
+        public static ActionResult Resolve(SkillSpec skill, CombatContext ctx, Unit caster, Unit target,
             IReadOnlyList<Unit> allies, IReadOnlyList<Unit> enemies)
         {
-            if (caster.Energy < skill.energyCost) return;
-            caster.GainEnergy(-skill.energyCost);
-            caster.GainUlt(skill.ultDelta);
-            ApplyDamage(skill, ctx, caster, target, enemies);
-            ApplyHeal(skill, caster, target, allies);
-        }
-
-        private static void ResolveUlt(
-            SkillSpec skill, CombatContext ctx, Unit caster, Unit target,
-            IReadOnlyList<Unit> allies, IReadOnlyList<Unit> enemies)
-        {
-            if (caster.Ult < caster.MaxUlt) return;
-            caster.GainUlt(-caster.MaxUlt);
-            ApplyDamage(skill, ctx, caster, target, enemies);
-            ApplyHeal(skill, caster, target, allies);
-        }
-
-        private static void ApplyDamage(
-            SkillSpec skill, CombatContext ctx, Unit caster, Unit target, IReadOnlyList<Unit> enemies)
-        {
-            if (skill.damage == null) return;
-
-            if (skill.damage.target == "all")
+            if (ctx == null || !CanUse(skill, caster) || !ReferenceEquals(ctx.GetUnit(caster.Id), caster)) return null;
+            // 先验目标，避免非法请求扣费或改变后续随机序列。
+            if (skill.damage != null && skill.damage.target == "snipe" &&
+                (!Contains(enemies, target) || target.Team == caster.Team || !ReferenceEquals(ctx.GetUnit(target.Id), target))) return null;
+            if (skill.heal != null && skill.heal.target == "single" &&
+                (!Contains(allies, target) || target.Team != caster.Team || !ReferenceEquals(ctx.GetUnit(target.Id), target))) return null;
+            Unit damageTarget = target;
+            if (skill.damage != null && skill.damage.target == "single")
             {
-                foreach (var enemy in enemies)
+                damageTarget = TargetSelector.PickTarget(ctx, enemies);
+                if (damageTarget == null) return null;
+            }
+            ctx.BeginAction(BattleEventKind.Skill, caster, skill.id, skill.type == "basic");
+            if (skill.type == "ult") caster.GainUlt(-caster.MaxUlt);
+            if (skill.damage != null)
+            {
+                if (skill.damage.target == "all")
                 {
-                    if (enemy == null) continue;
-                    Damage.Apply(ctx, new DamageRequest
-                    {
-                        Amount = skill.damage.amount,
-                        Kind = skill.damage.kind,
-                        SourceUnitId = caster.Id,
-                        TargetUnitId = enemy.Id
-                    });
+                    foreach (var enemy in enemies) Hit(skill, ctx, caster, enemy);
+                }
+                else Hit(skill, ctx, caster, damageTarget);
+            }
+            if (skill.heal != null)
+            {
+                switch (skill.heal.target)
+                {
+                    case "self": Heal(caster, skill.heal.amount); break;
+                    case "all": foreach (var ally in allies) Heal(ally, skill.heal.amount); break;
+                    case "single": Heal(target, skill.heal.amount); break;
                 }
             }
-            else
-            {
-                if (target == null) return;
-                Damage.Apply(ctx, new DamageRequest
-                {
-                    Amount = skill.damage.amount,
-                    Kind = skill.damage.kind,
-                    SourceUnitId = caster.Id,
-                    TargetUnitId = target.Id
-                });
-            }
+            return ctx.CompleteAction();
         }
 
-        private static void ApplyHeal(
-            SkillSpec skill, Unit caster, Unit target, IReadOnlyList<Unit> allies)
+        private static void Heal(Unit unit, int amount)
         {
-            if (skill.heal == null) return;
+            if (unit != null && !unit.IsDead) unit.Heal(amount);
+        }
 
-            switch (skill.heal.target)
-            {
-                case "self":
-                    caster.Heal(skill.heal.amount);
-                    break;
-                case "all":
-                    foreach (var ally in allies)
-                    {
-                        if (ally == null) continue;
-                        ally.Heal(skill.heal.amount);
-                    }
-                    break;
-                default:
-                    if (target != null) target.Heal(skill.heal.amount);
-                    break;
-            }
+        private static void Hit(SkillSpec skill, CombatContext ctx, Unit caster, Unit target)
+        {
+            if (target == null || target.Team == caster.Team) return;
+            Damage.Apply(ctx, new DamageRequest { Amount = skill.damage.amount, Kind = skill.damage.kind,
+                SourceUnitId = caster.Id, TargetUnitId = target.Id });
         }
     }
 }

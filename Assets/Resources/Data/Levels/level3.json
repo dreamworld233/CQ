@@ -1,1 +1,1 @@
-{ "id": 3, "name": "领主与爪牙", "waves": [ { "enemies": ["lord", "claw", "claw"] } ] }
+{ "id": 3, "name": "领主与爪牙", "waves": [ { "enemies": ["lord", "claw", "claw"], "slots": ["back1", "front1", "front2"] } ] }

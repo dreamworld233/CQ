@@ -5,8 +5,8 @@ using CQ.Core.Combat;
 
 public class SpeedSorterTests
 {
-    private static Unit Player(int speed) => new Unit("p", Team.Player) { MaxHp = 10, Hp = 10, BaseSpeed = speed };
-    private static Unit Enemy(int speed) => new Unit("e", Team.Enemy) { MaxHp = 10, Hp = 10, BaseSpeed = speed };
+    private static Unit Player(int speed, string slotId = "front1") => new Unit("p", Team.Player) { SlotId = slotId, MaxHp = 10, Hp = 10, BaseSpeed = speed };
+    private static Unit Enemy(int speed) => new Unit("e", Team.Enemy) { SlotId = "front1", MaxHp = 10, Hp = 10, BaseSpeed = speed };
 
     [Test]
     public void SameSpeed_Player_First()
@@ -21,8 +21,8 @@ public class SpeedSorterTests
     public void SameTeamSameSpeed_StableOrder()
     {
         var a = Player(5); a.Id = "a";
-        var b = Player(5); b.Id = "b";
-        var c = Player(5); c.Id = "c";
+        var b = Player(5, "front2"); b.Id = "b";
+        var c = Player(5, "back1"); c.Id = "c";
         var order = SpeedSorter.Sort(new List<Unit> { a, b, c }, u => u.BaseSpeed);
         Assert.AreEqual("a", order[0].Id);
         Assert.AreEqual("b", order[1].Id);

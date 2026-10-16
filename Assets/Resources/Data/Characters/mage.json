@@ -4,13 +4,30 @@
   "role": "support",
   "maxHp": 80,
   "baseSpeed": 8,
-  "maxEnergy": 3,
   "maxUlt": 3,
-  "row": "back",
-  "aggroWeight": 1,
+  "defaultSlot": "back1",
   "skills": [
-    { "id": "mage_basic", "name": "魔弹", "type": "basic", "energyDelta": 1, "ultDelta": 1, "damage": { "kind": "magic", "target": "single", "amount": 10 } },
-    { "id": "mage_skill", "name": "火球", "type": "skill", "energyCost": 2, "ultDelta": 1, "damage": { "kind": "magic", "target": "single", "amount": 28 } },
-    { "id": "mage_ult", "name": "群星坠落", "type": "ult", "damage": { "kind": "magic", "target": "all", "amount": 38 } }
-  ]
+    {
+      "id": "mage_basic",
+      "name": "魔弹",
+      "type": "basic",
+      "damage": {
+        "kind": "magic",
+        "target": "single",
+        "amount": 10
+      }
+    },
+    {
+      "id": "mage_ult",
+      "name": "群星坠落",
+      "type": "ult",
+      "damage": {
+        "kind": "magic",
+        "target": "all",
+        "amount": 38
+      }
+    }
+  ],
+  "ultChargeTrigger": "attack",
+  "ultChargeAmount": 1
 }

@@ -67,6 +67,8 @@ namespace CQ.Core.Battle
                 var unit = queue.Next();
                 if (unit == null || unit.IsDead) continue;
                 actResolver?.Invoke(unit);
+                ResolveWin();
+                if (IsFinished) break;
             }
 
             Phase = BattlePhase.DeathCheck;
@@ -75,6 +77,8 @@ namespace CQ.Core.Battle
             if (!IsFinished) Phase = BattlePhase.RoundEnd;
             return order;
         }
+
+        public void CheckWinner() => ResolveWin();
 
         private void ResolveWin()
         {

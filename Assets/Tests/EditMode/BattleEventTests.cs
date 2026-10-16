@@ -8,6 +8,25 @@ using CQ.Core.Config;
 /// <summary>结算事件日志（表现层逐条播报用）的确定性断言。</summary>
 public class BattleEventTests
 {
+    private static readonly string[] SlotIds = { "front1", "front2", "back1", "back2", "back3" };
+
+    private static FormationConfig TestFormation() =>
+        new FormationConfig { frontBaseTaunt = 100, backBaseTaunt = 50 };
+
+    private static void AssignSlots(IReadOnlyList<CharacterConfig> characters)
+    {
+        Assert.LessOrEqual(characters.Count, SlotIds.Length);
+        var used = new HashSet<string>(characters.Where(c => c.defaultSlot != null).Select(c => c.defaultSlot));
+        foreach (var c in characters)
+            if (c.defaultSlot == null)
+            {
+                c.defaultSlot = SlotIds.First(slot => !used.Contains(slot));
+                used.Add(c.defaultSlot);
+            }
+        Assert.AreEqual(characters.Count, characters.Select(c => c.defaultSlot).Distinct().Count());
+        Assert.IsTrue(characters.All(c => SlotIds.Contains(c.defaultSlot)));
+    }
+
     private static CharacterConfig C(string id, int hp, int speed, int atk, bool aoe = false) => new CharacterConfig
     {
         id = id,
@@ -15,13 +34,11 @@ public class BattleEventTests
         role = "dps",
         maxHp = hp,
         baseSpeed = speed,
-        maxEnergy = 3,
+        ultChargeTrigger = "attack", ultChargeAmount = 1,
         maxUlt = 3,
-        row = "front",
-        aggroWeight = 2,
         skills = new List<SkillSpec>
         {
-            new SkillSpec { id = id + "_basic", name = "普攻", type = "basic", energyDelta = 1, ultDelta = 1,
+            new SkillSpec { id = id + "_basic", name = "普攻", type = "basic",
                 damage = new DamageSpec { kind = "physical", target = aoe ? "all" : "single", amount = atk } }
         }
     };
@@ -32,8 +49,6 @@ public class BattleEventTests
         name = id,
         maxHp = hp,
         baseSpeed = speed,
-        row = "front",
-        aggroWeight = 2,
         intentSequence = new[] { "attack" },
         intents = new List<IntentConfig>
         {
@@ -43,9 +58,11 @@ public class BattleEventTests
 
     private static BattleEngine Make(long seed, IEnumerable<CharacterConfig> chars, IEnumerable<EnemyConfig> enemies)
     {
+        var characterList = chars.ToList();
+        AssignSlots(characterList);
         var list = enemies.ToList();
-        return BattleEngine.Create(seed, chars, list.Select(e => e.id).ToList(), list.ToDictionary(e => e.id),
-            new CardConfig[0]);
+        return BattleEngine.Create(seed, characterList, list.Select(e => e.id).ToList(), list.ToDictionary(e => e.id),
+            new CardConfig[0], SlotIds.Take(list.Count).ToArray(), TestFormation());
     }
 
     [Test]
@@ -101,8 +118,33 @@ public class BattleEventTests
         var ev = eng.RoundEvents.FirstOrDefault(e => e.Kind == BattleEventKind.Intent);
         Assert.IsNotNull(ev, "敌方出手应有意图事件");
         Assert.AreEqual("attack", ev.ActionId);
-        Assert.AreEqual("sword", ev.TargetId, "单体攻击事件应指向被锁定的玩家");
+        Assert.AreEqual("sword", ev.TargetId, "单体攻击事件应指向执行时选中的玩家");
         Assert.AreEqual(-13, ev.HpDelta);
+    }
+
+    [Test]
+    public void Later_Enemy_Targets_Living_Player_After_Earlier_Enemy_Kill()
+    {
+        var eng = Make(5, new[] { C("fragile", 10, 1, 0), C("survivor", 100, 1, 0) },
+            new[] { E("killer", 100, 20, 20), E("follower", 100, 10, 7) });
+        eng.StartBattle();
+        eng.Ctx.FormationOf(Team.Player).GetSlot("front2").AddModifier(-100, 1);
+        eng.EndRound();
+
+        var hits = eng.RoundEvents.Where(e => e.Kind == BattleEventKind.Intent && e.HpDelta < 0).ToList();
+        Assert.AreEqual(2, hits.Count);
+        Assert.AreEqual("killer_0", hits[0].ActorId);
+        Assert.AreEqual("fragile", hits[0].TargetId);
+        Assert.AreEqual(-10, hits[0].HpDelta, "过量伤害只记录实际扣血");
+        Assert.IsTrue(hits[0].TargetDead);
+        Assert.AreEqual("follower_1", hits[1].ActorId);
+        Assert.AreEqual("survivor", hits[1].TargetId, "执行时不得选择已死亡的旧候选");
+        Assert.AreEqual(-7, hits[1].HpDelta);
+        Assert.IsFalse(hits[1].TargetDead);
+        Assert.AreEqual(93, eng.Ctx.GetUnit("survivor").Hp);
+        Assert.AreSame(eng.Ctx.GetUnit("fragile"), eng.Ctx.FormationOf(Team.Player).GetSlot("front1").Occupant,
+            "死亡后保留槽位，不补位");
+        Assert.AreEqual(0, eng.Ctx.FormationOf(Team.Player).GetSlot("front1").EffectiveTaunt);
     }
 
     [Test]

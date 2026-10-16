@@ -7,10 +7,10 @@ using CQ.Core.Status;
 public class StatusResolverTests
 {
     private static Unit U(string id, int speed) =>
-        new Unit(id, Team.Player) { MaxHp = 100, Hp = 100, BaseSpeed = speed };
+        new Unit(id, Team.Player) { SlotId = "front1", MaxHp = 100, Hp = 100, BaseSpeed = speed };
 
     private static Unit E(string id) =>
-        new Unit(id, Team.Enemy) { MaxHp = 100, Hp = 100, BaseSpeed = 1 };
+        new Unit(id, Team.Enemy) { SlotId = "front1", MaxHp = 100, Hp = 100, BaseSpeed = 1 };
 
     private static CombatContext Ctx(params Unit[] units) => new CombatContext(new Rng(1), units);
 

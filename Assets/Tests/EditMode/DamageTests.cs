@@ -5,7 +5,7 @@ using CQ.Core.Combat;
 
 public class DamageTests
 {
-    private static Unit U(string id, Team team, int hp) => new Unit(id, team) { MaxHp = hp, Hp = hp };
+    private static Unit U(string id, Team team, int hp) => new Unit(id, team) { SlotId = "front1", MaxHp = hp, Hp = hp };
 
     private static CombatContext Ctx(int targetHp)
     {

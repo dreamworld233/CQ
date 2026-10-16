@@ -25,12 +25,10 @@ namespace CQ.Runtime
 
         private BattleEngine _engine;
         private readonly Dictionary<string, UnitView> _views = new Dictionary<string, UnitView>();
-        private readonly Dictionary<string, string> _queued = new Dictionary<string, string>();   // 本回合已登记技能
         private string _selectedActor;
-        private string _selectedTarget;
         private SkillSpec _pendingSkill;   // 待选目标的技能
         private readonly List<string> _log = new List<string>();   // 左栏战报（逐条伤害/治疗）
-        private int _logCursor;                                    // 已播报的引擎事件下标
+        private long _logCursor;                                    // 已播报的引擎事件下标
         private Transform _worldRoot;
         private Camera _cam;
         private BattleUi _ui;
@@ -169,15 +167,15 @@ namespace CQ.Runtime
 
         private void OnUnitTapped(Unit unit)
         {
-            if (unit == null || unit.IsDead) return;
+            if (unit == null || unit.IsDead || _engine.IsFinished) return;
 
             if (unit.Team == Team.Player)
             {
                 // 待选目标的单体治疗：点友方 = 定目标，不能把选中角色顶掉
                 if (_pendingSkill != null && NeedsSingleAlly(_pendingSkill))
                 {
-                    TryChooseSkill(_selectedActor, _pendingSkill.id, unit.Id);
-                    return;   // TryChooseSkill 内部已刷选择态与 HUD
+                    TryUseUltimate(_selectedActor, _pendingSkill.id, unit.Id);
+                    return;   // TryUseUltimate 内部已刷选择态与 HUD
                 }
 
                 _selectedActor = unit.Id;
@@ -186,18 +184,14 @@ namespace CQ.Runtime
             }
             else
             {
-                if (_pendingSkill == null)
-                {
-                    _selectedTarget = unit.Id;
-                    Log("锁定 " + unit.Name);
-                }
+                if (_pendingSkill == null) return;
                 else if (NeedsSingleAlly(_pendingSkill))
                 {
                     Log("此技能点友方");
                 }
                 else
                 {
-                    TryChooseSkill(_selectedActor, _pendingSkill.id, unit.Id);
+                    TryUseUltimate(_selectedActor, _pendingSkill.id, unit.Id);
                 }
             }
             RefreshSelection();
@@ -206,8 +200,9 @@ namespace CQ.Runtime
         private void ShowRadial(string actorId)
         {
             if (!_views.TryGetValue(actorId, out var view)) return;
-            var skills = _engine.SkillsOf(actorId);
-            _radial.Show(view.transform.position, skills, s => _engine.CanUseSkill(actorId, s.id));
+            var ult = _engine.UltimateOf(actorId);
+            var skills = ult == null ? new List<SkillSpec>() : new List<SkillSpec> { ult };
+            _radial.Show(view.transform.position, skills, s => _engine.CanUseUltimate(actorId));
         }
 
         private void OnRadialPicked(SkillSpec s)
@@ -221,26 +216,28 @@ namespace CQ.Runtime
             }
             else
             {
-                TryChooseSkill(_selectedActor, s.id, _selectedTarget ?? _selectedActor);
+                TryUseUltimate(_selectedActor, s.id, null);
             }
         }
 
-        private static bool NeedsSingleEnemy(SkillSpec s) => s.damage != null && s.damage.target == "single";
+        private static bool NeedsSingleEnemy(SkillSpec s) => s.damage != null && s.damage.target == "snipe";
         private static bool NeedsSingleAlly(SkillSpec s) => s.heal != null && s.heal.target == "single";
         private static bool NeedsTarget(SkillSpec s) => NeedsSingleEnemy(s) || NeedsSingleAlly(s);
 
-        private void TryChooseSkill(string actorId, string skillId, string targetId)
+        private void TryUseUltimate(string actorId, string skillId, string targetId)
         {
             _pendingSkill = null;
-            if (_engine.ChooseSkill(actorId, skillId, targetId))
+            if (_engine.UseUltimate(actorId, targetId))
             {
-                _queued[actorId] = SkillName(actorId, skillId);
-                Log(UnitName(actorId) + " " + SkillName(actorId, skillId) + " → " + UnitName(targetId) + "（已登记，结束回合结算）");
+                Log(UnitName(actorId) + " " + SkillName(actorId, skillId) + " → " + UnitName(targetId) + "（已释放）");
             }
             else
             {
-                Log("出招失败（能量/目标不符）");
+                Log("终结技失败（充能/目标不符）");
             }
+            _radial.Hide();
+            DrainEngineEvents();
+            RefreshWorld();
             RefreshSelection();
             RefreshHud();
         }
@@ -252,21 +249,22 @@ namespace CQ.Runtime
             _log.Clear();
             _logCursor = 0;
             _pendingSkill = null;
-            _queued.Clear();
             if (_radial != null) _radial.Hide();
 
             var chars = ConfigLoader.LoadCharacters();
             var enemies = ConfigLoader.LoadEnemies();
             var cards = ConfigLoader.LoadCards();
             var levels = ConfigLoader.LoadLevels();
+            var formation = ConfigLoader.LoadFormation();
 
-            int errors = chars.errors.Count + enemies.errors.Count + cards.errors.Count + levels.errors.Count;
+            int errors = chars.errors.Count + enemies.errors.Count + cards.errors.Count + levels.errors.Count + formation.errors.Count;
             if (errors > 0)
             {
                 DumpErrors("角色", chars.errors);
                 DumpErrors("敌人", enemies.errors);
                 DumpErrors("卡", cards.errors);
                 DumpErrors("关卡", levels.errors);
+                DumpErrors("阵型", formation.errors);
                 _ui.ShowError("配置错误，查看 Console");
                 return;
             }
@@ -285,17 +283,18 @@ namespace CQ.Runtime
             var level = _levels[_levelIndex];
 
             var catalog = enemies.items.ToDictionary(e => e.id);
-            _engine = BattleEngine.Create(seed + _levelIndex, chars.items, level.waves[0].enemies, catalog, cards.items);
+            var wave = level.waves[0];
+            _engine = BattleEngine.Create(seed + _levelIndex, chars.items, wave.enemies, catalog, cards.items,
+                wave.slots, formation.items[0]);
             _engine.StartBattle();
 
             _selectedActor = _engine.Players.FirstOrDefault(p => !p.IsDead)?.Id;
-            _selectedTarget = _engine.Enemies.FirstOrDefault(e => !e.IsDead)?.Id;
 
             SpawnWorld();
             RefreshWorld();
             RefreshSelection();
             RefreshHud();
-            Log("开战 " + (_levelIndex + 1) + "/" + _levels.Count + "：" + level.name + "，点我方角色选招");
+            Log("开战 " + (_levelIndex + 1) + "/" + _levels.Count + "：" + level.name + "，普攻自动执行，点我方角色释放终结技");
             if (!string.IsNullOrEmpty(_selectedActor)) ShowRadial(_selectedActor);   // 开局即亮当前角色技能
         }
 
@@ -306,17 +305,15 @@ namespace CQ.Runtime
             _worldRoot = new GameObject("BattleWorld").transform;
             _worldRoot.SetParent(transform, false);
 
-            int slot = 0;
-            foreach (var p in _engine.Players) SpawnUnit(p, slot++);
-            slot = 0;
-            foreach (var e in _engine.Enemies) SpawnUnit(e, slot++);
+            foreach (var p in _engine.Players) SpawnUnit(p);
+            foreach (var e in _engine.Enemies) SpawnUnit(e);
         }
 
-        private void SpawnUnit(Unit unit, int slot)
+        private void SpawnUnit(Unit unit)
         {
             var go = new GameObject("Unit_" + unit.Id);
             go.transform.SetParent(_worldRoot, false);
-            go.transform.position = PositioningView.Position(unit, slot, layout);
+            go.transform.position = PositioningView.Position(unit, layout);
             // 不缩放根节点：缩放会同时放大碰撞体，造成相邻单位碰撞体重叠、选不中
             go.transform.localScale = Vector3.one;
 
@@ -340,7 +337,7 @@ namespace CQ.Runtime
             {
                 if (!_views.TryGetValue(u.Id, out var v)) continue;
                 IntentConfig it = (u.Team == Team.Enemy && !u.IsDead) ? _engine.CurrentIntentOf(u.Id) : null;
-                v.Refresh(u, it != null ? IntentText(u.Id, it) : "", it != null ? it.type : "");
+                v.Refresh(u, it != null ? IntentText(it) : "", it != null ? it.type : "");
                 v.SetAppearance(UnitColor(u, u.IsDead), u.IsDead);
             }
         }
@@ -374,7 +371,6 @@ namespace CQ.Runtime
                     : string.Join("\n", cur.Select(u =>
                     {
                         string tag = (u.Team == Team.Player ? "我 " : "敌 ") + u.Name + (u.IsDead ? "(亡)" : "");
-                        if (_queued.TryGetValue(u.Id, out var sk)) tag += "〔" + sk + "〕";
                         return tag;
                     }));
                 if (_engine.IsFinished)
@@ -390,15 +386,12 @@ namespace CQ.Runtime
         private void EndRoundAction()
         {
             if (_engine == null || _engine.IsFinished) return;
-            var before = SnapshotHp();
             _engine.EndRound();
             _pendingSkill = null;
-            _queued.Clear();
             if (_radial != null) _radial.Hide();
             RefreshWorld();
             RefreshSelection();
             DrainEngineEvents();   // 逐条播报：谁 用什么 → 打谁 掉多少
-            FloatDeltas(before);
             RefreshHud();
         }
 
@@ -406,10 +399,30 @@ namespace CQ.Runtime
         private void DrainEngineEvents()
         {
             if (_engine == null) return;
-            var events = _engine.RoundEvents;
-            if (_logCursor > events.Count) _logCursor = 0;   // 引擎每回合清空，游标跟着回零
-            for (; _logCursor < events.Count; _logCursor++)
-                PushLog(FormatEvent(events[_logCursor]));
+            foreach (var result in _engine.ActionResults)
+            {
+                if (result.Sequence <= _logCursor) continue;
+                bool any = false;
+                foreach (var change in result.UnitChanges)
+                {
+                    if (change.HpDelta == 0) continue;
+                    any = true;
+                    PushLog(FormatEvent(new BattleEvent { Kind = result.Kind, ActorId = result.ActorId,
+                        ActionId = result.ActionId, TargetId = change.UnitId, HpDelta = change.HpDelta,
+                        TargetDead = change.After.IsDead }));
+                    if (_views.TryGetValue(change.UnitId, out var view))
+                    {
+                        view.FloatText((change.HpDelta > 0 ? "+" : "") + change.HpDelta,
+                            change.HpDelta > 0 ? Color.green : Color.red, change.HpDelta);
+                        view.Flash(change.HpDelta);
+                    }
+                }
+                if (!any) PushLog(FormatEvent(new BattleEvent { Kind = result.Kind, ActorId = result.ActorId,
+                    ActionId = result.ActionId }));
+                foreach (var hit in result.Hits)
+                    if (hit.ShieldAbsorbed > 0) PushLog(UnitName(hit.TargetUnitId) + " 护盾吸收 " + hit.ShieldAbsorbed);
+                _logCursor = result.Sequence;
+            }
         }
 
         private string FormatEvent(BattleEvent ev)
@@ -450,30 +463,6 @@ namespace CQ.Runtime
             }
         }
 
-        /// <summary>结算前后血量快照差 → 飘字。数值反馈（用户要求能看出掉血/回血）。</summary>
-        private Dictionary<string, int> SnapshotHp()
-        {
-            var map = new Dictionary<string, int>();
-            if (_engine == null) return map;
-            foreach (var u in _engine.Ctx.Units) map[u.Id] = u.Hp;
-            return map;
-        }
-
-        private void FloatDeltas(Dictionary<string, int> before)
-        {
-            if (_engine == null) return;
-            foreach (var u in _engine.Ctx.Units)
-            {
-                if (!before.TryGetValue(u.Id, out int hp0)) continue;
-                int delta = u.Hp - hp0;
-                if (delta == 0) continue;
-                if (!_views.TryGetValue(u.Id, out var v)) continue;
-                v.FloatText((delta > 0 ? "+" : "") + delta,
-                    delta > 0 ? new Color(0.4f, 1f, 0.5f) : new Color(1f, 0.45f, 0.45f), delta);
-                v.Flash(delta);   // 掉血闪白 + 抖动，回血闪绿
-            }
-        }
-
         private void NextLevelAction()
         {
             if (!HasNextLevel()) return;
@@ -486,17 +475,17 @@ namespace CQ.Runtime
 
         // ---------- 意图文本 ----------
 
-        private string IntentText(string enemyId, IntentConfig it)
+        private static string IntentText(IntentConfig it)
         {
             if (it == null) return "";
             switch (it.type)
             {
                 case "attack":
-                    return it.target == "all" ? "全体 -" + it.damage : SingleTargetText(enemyId, it.damage);
+                    return it.target == "all" ? "全体 -" + it.damage : "单体 -" + it.damage;
                 case "multi":
-                    return SingleTargetText(enemyId, it.damage * it.hits);
+                    return "单体 -" + (it.damage * it.hits);
                 case "charge":
-                    return "蓄 " + SingleTargetText(enemyId, it.nextDamage);
+                    return "蓄 单体 -" + it.nextDamage;
                 case "attackUp":
                     return "↑";
                 case "debuff":
@@ -504,13 +493,6 @@ namespace CQ.Runtime
                 default:
                     return it.type;
             }
-        }
-
-        private string SingleTargetText(string enemyId, int damage)
-        {
-            string targetId = _engine.GetIntentTarget(enemyId);
-            string name = targetId != null ? UnitName(targetId) : "单体";
-            return name + " -" + damage;
         }
 
         // ---------- 辅助 ----------

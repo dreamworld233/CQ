@@ -7,7 +7,7 @@ namespace CQ.Core.Config
     public class DamageSpec
     {
         public string kind;    // physical | magic
-        public string target;  // single | all
+        public string target;  // single | snipe | all
         public int amount;
     }
 
@@ -23,10 +23,7 @@ namespace CQ.Core.Config
     {
         public string id;
         public string name;
-        public string type;       // basic | skill | ult
-        public int energyDelta;   // 普攻回能量
-        public int energyCost;    // 技能耗能量
-        public int ultDelta;      // 攒大招条
+        public string type;       // basic | ult
         public DamageSpec damage; // 伤害招式
         public HealSpec heal;     // 治疗招式
     }
@@ -39,10 +36,10 @@ namespace CQ.Core.Config
         public string role;       // dps | tank | support
         public int maxHp;
         public int baseSpeed;
-        public int maxEnergy;
         public int maxUlt;
-        public string row;        // front | back
-        public int aggroWeight;
+        public string ultChargeTrigger; // attack | hit
+        public int ultChargeAmount;
+        public string defaultSlot; // front1 | front2 | back1 | back2 | back3
         public List<SkillSpec> skills;
     }
 }

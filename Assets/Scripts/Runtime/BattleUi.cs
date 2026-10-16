@@ -127,7 +127,7 @@ namespace CQ.Runtime
             // 会盖住战场：既吞掉所有世界点击，又让点空白触发结束回合。
 
             // 结束回合：右下角大按钮
-            EndRoundButton = UiKit.MakeButton(CanvasRect, "结束回合", 44, ButtonBg);
+            EndRoundButton = UiKit.MakeButton(CanvasRect, "开始行动", 44, ButtonBg);
             Rect((RectTransform)EndRoundButton.transform, 1f, 0f, 1f, 0f, new Vector2(-36f, 36f), new Vector2(300f, 130f));
             EndRoundButton.onClick.AddListener(() => OnEndRound?.Invoke());
 

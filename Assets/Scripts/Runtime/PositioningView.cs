@@ -33,9 +33,19 @@ namespace CQ.Runtime
     /// </summary>
     public static class PositioningView
     {
-        public static Vector3 Position(Unit unit, int slot, BattleLayout layout)
+        public static Vector3 Position(Unit unit, BattleLayout layout)
         {
             if (layout == null) layout = new BattleLayout();
+            int slot;
+            switch (unit.SlotId)
+            {
+                case "front1":
+                case "back1": slot = 0; break;
+                case "front2":
+                case "back2": slot = 1; break;
+                case "back3": slot = 2; break;
+                default: throw new ArgumentException("未知阵型槽位: " + unit.SlotId, nameof(unit));
+            }
             float side = unit.Team == Team.Player ? 1f : -1f;
             float x = layout.arenaShift + side * (layout.baseOffset + slot * layout.teamGap);
             bool front = unit.Row == "front";

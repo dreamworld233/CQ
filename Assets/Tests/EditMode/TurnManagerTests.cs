@@ -5,8 +5,8 @@ using CQ.Core.Combat;
 
 public class TurnManagerTests
 {
-    private static Unit P(string id, int speed) => new Unit(id, Team.Player) { MaxHp = 10, Hp = 10, BaseSpeed = speed };
-    private static Unit E(string id, int speed) => new Unit(id, Team.Enemy) { MaxHp = 10, Hp = 10, BaseSpeed = speed };
+    private static Unit P(string id, int speed) => new Unit(id, Team.Player) { SlotId = "front1", MaxHp = 10, Hp = 10, BaseSpeed = speed };
+    private static Unit E(string id, int speed) => new Unit(id, Team.Enemy) { SlotId = "front1", MaxHp = 10, Hp = 10, BaseSpeed = speed };
 
     [Test]
     public void EmptyRound_Advances_WithoutError()
