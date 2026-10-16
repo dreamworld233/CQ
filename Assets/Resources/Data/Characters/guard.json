@@ -19,10 +19,10 @@
     },
     {
       "id": "guard_ult",
-      "name": "团体治疗",
+      "name": "治疗",
       "type": "ult",
       "heal": {
-        "target": "all",
+        "target": "single",
         "amount": 20
       }
     }

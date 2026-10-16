@@ -103,7 +103,7 @@ public class ConfigLoaderTests
             new SkillSpec { id = "basic", name = "Basic", type = "basic",
                 damage = new DamageSpec { kind = "physical", target = "single", amount = 1 } },
             new SkillSpec { id = "ult", name = "Ult", type = "ult",
-                damage = new DamageSpec { kind = "magic", target = "snipe", amount = 5 } }
+                damage = new DamageSpec { kind = "magic", target = "single", amount = 5 } }
         }
     };
 
@@ -184,6 +184,7 @@ public class ConfigLoaderTests
     [TestCase("oldSkill")]
     [TestCase("badDamageTarget")]
     [TestCase("basicSnipe")]
+    [TestCase("ultSnipe")]
     [TestCase("badKind")]
     [TestCase("zeroDamage")]
     [TestCase("badHealTarget")]
@@ -205,6 +206,7 @@ public class ConfigLoaderTests
             case "nullSkill": c.skills[1] = null; break;
             case "oldSkill": c.skills[1].type = "skill"; break;
             case "badDamageTarget": c.skills[1].damage.target = "friend"; break;
+            case "ultSnipe": c.skills[1].damage.target = "snipe"; break;
             case "basicSnipe": c.skills[0].damage.target = "snipe"; break;
             case "badKind": c.skills[1].damage.kind = "unknown"; break;
             case "zeroDamage": c.skills[1].damage.amount = 0; break;

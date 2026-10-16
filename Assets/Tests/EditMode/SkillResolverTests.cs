@@ -17,9 +17,8 @@ public class SkillResolverTests
         new FormationConfig { frontBaseTaunt = 100, backBaseTaunt = 50 });
     private static SkillSpec Attack(string type = "basic", string target = "single", int amount = 12) =>
         new SkillSpec { id = type, type = type, damage = new DamageSpec { kind = "physical", target = target, amount = amount } };
-    private static ActionResult Cast(CombatContext ctx, Unit actor, SkillSpec skill, Unit target = null) =>
-        SkillResolver.Resolve(skill, ctx, actor, target,
-            ctx.Units.Where(u => u.Team == actor.Team).ToList(), ctx.Units.Where(u => u.Team != actor.Team).ToList());
+    private static ActionResult Cast(CombatContext ctx, Unit actor, SkillSpec skill) =>
+        SkillResolver.Resolve(skill, ctx, actor);
 
     [TestCase(12, "physical")]
     [TestCase(8, "physical")]
@@ -98,24 +97,6 @@ public class SkillResolverTests
         Assert.IsTrue(result.Charges.All(c => c.Trigger == "hit"));
     }
 
-    [TestCase("snipe")]
-    [TestCase("heal")]
-    public void Target_Validation_Is_Independent_Of_Charge_And_Does_Not_Resolve(string mode)
-    {
-        var actor = U("actor", Team.Player);
-        var ally = U("ally", Team.Player, "back1");
-        var enemy = U("enemy", Team.Enemy);
-        var ctx = Ctx(actor, ally, enemy);
-        var skill = mode == "snipe" ? Attack("ult", "snipe") :
-            new SkillSpec { id = "heal", type = "ult", heal = new HealSpec { target = "single", amount = 20 } };
-        var target = mode == "snipe" ? enemy : ally;
-        Assert.IsFalse(SkillResolver.CanUse(skill, actor));
-        Assert.IsTrue(SkillResolver.IsValidTarget(skill, ctx, actor, target, new[] { actor, ally }, new[] { enemy }));
-        Assert.AreEqual(0, actor.Ult); Assert.AreEqual(100, target.Hp); Assert.IsEmpty(ctx.ActionResults);
-        target.Hp = 0;
-        Assert.IsFalse(SkillResolver.IsValidTarget(skill, ctx, actor, target, new[] { actor, ally }, new[] { enemy }));
-    }
-
     [Test]
     public void Ultimate_Not_Full_Does_Nothing()
     {
@@ -128,39 +109,17 @@ public class SkillResolverTests
     }
 
     [Test]
-    public void Single_Uses_Taunt_Snipe_Uses_Explicit_Target()
+    public void Single_Uses_Taunt_And_Removed_Snipe_Is_Rejected()
     {
         var actor = U("actor", Team.Player);
         var front = U("front", Team.Enemy);
         var back = U("back", Team.Enemy, "back1");
         var ctx = Ctx(actor, front, back);
-        Cast(ctx, actor, Attack(), back);
+        Cast(ctx, actor, Attack());
         Assert.AreEqual(88, front.Hp); Assert.AreEqual(100, back.Hp);
         actor.Ult = 3;
-        Cast(ctx, actor, Attack("ult", "single"), back);
-        Assert.AreEqual(76, front.Hp); Assert.AreEqual(100, back.Hp);
-        actor.Ult = 3;
-        Cast(ctx, actor, Attack("ult", "snipe"), back);
-        Assert.AreEqual(88, back.Hp);
-    }
-
-    [TestCase("snipe")]
-    [TestCase("heal")]
-    public void Illegal_Explicit_Targets_Do_Not_Spend_Or_Create_Action(string mode)
-    {
-        var actor = U("actor", Team.Player); actor.Ult = 3;
-        var ally = U("ally", Team.Player, "back1");
-        var enemy = U("enemy", Team.Enemy);
-        var ctx = Ctx(actor, ally, enemy);
-        var skill = mode == "snipe" ? Attack("ult", "snipe") :
-            new SkillSpec { id = "heal", type = "ult", heal = new HealSpec { target = "single", amount = 20 } };
-        Assert.IsNull(Cast(ctx, actor, skill));
-        Assert.IsNull(Cast(ctx, actor, skill, mode == "snipe" ? ally : enemy));
-        var dead = mode == "snipe" ? enemy : ally; dead.Hp = 0;
-        Assert.IsNull(Cast(ctx, actor, skill, dead));
-        var foreign = U("outsider", mode == "snipe" ? Team.Enemy : Team.Player);
-        Assert.IsNull(Cast(ctx, actor, skill, foreign));
-        Assert.AreEqual(3, actor.Ult); Assert.IsEmpty(ctx.ActionResults);
+        Assert.IsNull(Cast(ctx, actor, Attack("ult", "snipe")));
+        Assert.AreEqual(3, actor.Ult); Assert.AreEqual(1, ctx.ActionResults.Count);
     }
 
     [TestCase("self")]
@@ -173,9 +132,9 @@ public class SkillResolverTests
         var dead = U("dead", Team.Player, "back1"); dead.Hp = 0;
         var enemy = U("enemy", Team.Enemy);
         var result = Cast(Ctx(actor, ally, dead, enemy), actor,
-            new SkillSpec { id = "heal", type = "ult", heal = new HealSpec { target = mode, amount = 20 } }, ally);
-        Assert.AreEqual(mode == "single" ? 80 : 100, actor.Hp);
-        Assert.AreEqual(mode == "self" ? 90 : 100, ally.Hp);
+            new SkillSpec { id = "heal", type = "ult", heal = new HealSpec { target = mode, amount = 20 } });
+        Assert.AreEqual(100, actor.Hp);
+        Assert.AreEqual(mode == "all" ? 100 : 90, ally.Hp);
         Assert.AreEqual(0, dead.Hp); Assert.AreEqual(0, actor.Ult);
         Assert.IsEmpty(result.Hits); Assert.IsEmpty(result.Charges);
     }
@@ -326,8 +285,46 @@ public class SkillResolverTests
                 unit.MaxUlt = cfg.maxUlt; unit.UltChargeAmount = cfg.ultChargeAmount;
                 if (skill.type == "ult") unit.Ult = cfg.maxUlt;
                 var a = U("a", Team.Enemy); var b = U("b", Team.Enemy, "back1");
-                Assert.IsNotNull(Cast(Ctx(unit, a, b), unit, skill, skill.heal != null ? unit : a), cfg.id + "/" + skill.id);
+                Assert.IsNotNull(Cast(Ctx(unit, a, b), unit, skill), cfg.id + "/" + skill.id);
             }
         }
     }
+    [Test]
+    public void Heal_Uses_Percentage_Not_Absolute_Hp_And_Excludes_Enemy_And_Dead()
+    {
+        var actor = U("actor", Team.Player); actor.Ult = 3; actor.Hp = 90;
+        var small = U("small", Team.Player, "front2", hp: 40); small.Hp = 20;
+        var large = U("large", Team.Player, "back1", hp: 200); large.Hp = 40;
+        var dead = U("dead", Team.Player, "back2"); dead.Hp = 0;
+        var enemy = U("enemy", Team.Enemy); enemy.Hp = 1;
+        Cast(Ctx(actor, small, large, dead, enemy), actor,
+            new SkillSpec { id = "heal", type = "ult", heal = new HealSpec { target = "single", amount = 20 } });
+        Assert.AreEqual(60, large.Hp); Assert.AreEqual(20, small.Hp);
+        Assert.AreEqual(90, actor.Hp); Assert.AreEqual(0, dead.Hp); Assert.AreEqual(1, enemy.Hp);
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void Heal_Ties_Use_Registration_Order_Including_Self_And_Do_Not_Consume_Rng(bool selfFirst)
+    {
+        var actor = U("actor", Team.Player); actor.Ult = 3; actor.Hp = 50;
+        var ally = U("ally", Team.Player, "back1", hp: 200); ally.Hp = 100;
+        var enemy = U("enemy", Team.Enemy);
+        var ctx = selfFirst ? Ctx(actor, ally, enemy) : Ctx(ally, actor, enemy);
+        Cast(ctx, actor, new SkillSpec { id = "heal", type = "ult", heal = new HealSpec { target = "single", amount = 20 } });
+        Assert.AreEqual(selfFirst ? 70 : 50, actor.Hp);
+        Assert.AreEqual(selfFirst ? 100 : 120, ally.Hp);
+        Assert.AreEqual(new Rng(1).NextInt(0, 100000), ctx.Rng.NextInt(0, 100000));
+    }
+
+    [Test]
+    public void Heal_Large_Cross_Products_Do_Not_Overflow()
+    {
+        var actor = U("actor", Team.Player, hp: 2000000000); actor.Hp = 1500000000; actor.Ult = 3;
+        var ally = U("ally", Team.Player, "back1", hp: 1800000000); ally.Hp = 1200000000;
+        Cast(Ctx(actor, ally), actor,
+            new SkillSpec { id = "heal", type = "ult", heal = new HealSpec { target = "single", amount = 20 } });
+        Assert.AreEqual(1200000020, ally.Hp); Assert.AreEqual(1500000000, actor.Hp);
+    }
+
 }

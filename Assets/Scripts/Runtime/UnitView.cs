@@ -114,6 +114,14 @@ namespace CQ.Runtime
             Refresh(unit, "", "");
         }
 
+        public void SetPosition(Vector3 position, Unit unit)
+        {
+            _home = position;
+            transform.position = position;
+            _shakeT = 0f;
+            if (_sr != null) _sr.sortingOrder = unit.Row == "front" ? 10 : 5;
+        }
+
         public void Refresh(Unit unit, string intentText, string intentType)
         {
             float hpRatio = unit.MaxHp > 0 ? (float)unit.Hp / unit.MaxHp : 0f;

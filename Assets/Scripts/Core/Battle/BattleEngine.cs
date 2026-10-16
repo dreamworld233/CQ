@@ -60,7 +60,6 @@ namespace CQ.Core.Battle
         {
             public Unit Caster;
             public SkillSpec Skill;
-            public string TargetId;
             public int Reserved;
         }
 
@@ -195,6 +194,14 @@ namespace CQ.Core.Battle
             MaxUlt = 0
         };
 
+        public bool TryMovePlayer(string actorId, string slotId)
+        {
+            if (Flow != BattleFlow.Setup) return false;
+            var unit = Ctx.GetUnit(actorId);
+            return unit != null && !unit.IsDead && unit.Team == Team.Player &&
+                Ctx.FormationOf(Team.Player).TryMove(unit, slotId);
+        }
+
         /// <summary>开局：意图亮（首轮游标已是 0）+ 抽 1 张，开放输入。</summary>
         public void StartBattle()
         {
@@ -221,17 +228,17 @@ namespace CQ.Core.Battle
             return true;
         }
 
-        public bool RequestUltimate(string charId, string targetUnitId = null)
+        public bool RequestUltimate(string charId)
         {
             if (!CanRequestUltimate(charId)) return false;
             var unit = Ctx.GetUnit(charId);
             var skill = UltimateOf(charId);
-            if (!SkillResolver.IsValidTarget(skill, Ctx, unit, Ctx.GetUnit(targetUnitId), AlivePlayers(), AliveEnemies()))
+            if (!SkillResolver.IsValidTarget(skill, Ctx, unit))
                 return false;
             int reserved = unit.MaxUlt;
             unit.GainUlt(-reserved);
             _requested.Add(charId);
-            _pending.Add(new UltimateRequest { Caster = unit, Skill = skill, TargetId = targetUnitId, Reserved = reserved });
+            _pending.Add(new UltimateRequest { Caster = unit, Skill = skill, Reserved = reserved });
             return true;
         }
 
@@ -244,17 +251,6 @@ namespace CQ.Core.Battle
             SkillResolver.CanUse(UltimateOf(charId), Ctx.GetUnit(charId));
 
         public bool HasUltimateRequest(string charId) => charId != null && _requested.Contains(charId);
-        public bool CanCancelUltimate(string charId) => _pending.Any(r => r.Caster.Id == charId);
-
-        public bool CancelUltimate(string charId)
-        {
-            var request = _pending.Find(r => r.Caster.Id == charId);
-            if (request == null) return false;
-            Refund(request);
-            _pending.Remove(request);
-            return true;
-        }
-
         private void Refund(UltimateRequest request)
         {
             request.Caster.GainUlt(request.Reserved);
@@ -267,8 +263,7 @@ namespace CQ.Core.Battle
             for (int i = _pending.Count - 1; i >= 0; i--)
             {
                 var request = _pending[i];
-                if (!IsFinished && SkillResolver.IsValidTarget(request.Skill, Ctx, request.Caster,
-                    Ctx.GetUnit(request.TargetId), AlivePlayers(), AliveEnemies())) continue;
+                if (!IsFinished && SkillResolver.IsValidTarget(request.Skill, Ctx, request.Caster)) continue;
                 Refund(request);
                 _pending.RemoveAt(i);
             }
@@ -301,8 +296,7 @@ namespace CQ.Core.Battle
             {
                 var request = _pending[0];
                 _pending.RemoveAt(0);
-                var result = SkillResolver.ResolveReserved(request.Skill, Ctx, request.Caster,
-                    Ctx.GetUnit(request.TargetId), AlivePlayers(), AliveEnemies());
+                var result = SkillResolver.ResolveReserved(request.Skill, Ctx, request.Caster);
                 if (result == null) { Refund(request); continue; }
                 request.Reserved = 0;
                 _executing = request;
@@ -373,7 +367,7 @@ namespace CQ.Core.Battle
         {
             if (!_chars.TryGetValue(unit.Id, out var cfg)) return;
             var basic = cfg.skills?.Find(s => s.type == "basic");
-            SkillResolver.Resolve(basic, Ctx, unit, null, AlivePlayers(), AliveEnemies());
+            SkillResolver.Resolve(basic, Ctx, unit);
         }
 
         private void ActEnemy(Unit unit)
@@ -389,9 +383,6 @@ namespace CQ.Core.Battle
 
             _enemyResolver.Resolve(Ctx, unit.Id, model);
         }
-
-        private List<Unit> AlivePlayers() => Players.Where(p => !p.IsDead).ToList();
-        private List<Unit> AliveEnemies() => Enemies.Where(e => !e.IsDead).ToList();
 
         public IReadOnlyList<SkillSpec> SkillsOf(string charId) =>
             _chars.TryGetValue(charId, out var c) ? c.skills : null;

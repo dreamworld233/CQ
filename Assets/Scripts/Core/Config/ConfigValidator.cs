@@ -43,8 +43,7 @@ namespace CQ.Core.Config
                 {
                     if (s.damage.amount <= 0) return "damage amount 须 > 0";
                     if (s.damage.kind != "physical" && s.damage.kind != "magic") return "damage kind 非法";
-                    if (s.damage.target != "single" && s.damage.target != "all" && s.damage.target != "snipe") return "damage target 非法";
-                    if (s.type == "basic" && s.damage.target == "snipe") return "basic 不可 snipe";
+                    if (s.damage.target != "single" && s.damage.target != "all") return "damage target 非法";
                 }
                 if (s.heal != null)
                 {

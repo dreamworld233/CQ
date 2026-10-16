@@ -7,7 +7,7 @@ namespace CQ.Core.Config
     public class DamageSpec
     {
         public string kind;    // physical | magic
-        public string target;  // single | snipe | all
+        public string target;  // single | all
         public int amount;
     }
 

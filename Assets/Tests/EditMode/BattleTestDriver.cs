@@ -27,9 +27,9 @@ internal static class BattleTestDriver
         return engine.TurnOrder;
     }
 
-    public static bool RequestAndPlay(BattleEngine engine, string actor, string target = null)
+    public static bool RequestAndPlay(BattleEngine engine, string actor)
     {
-        if (!engine.RequestUltimate(actor, target)) return false;
+        if (!engine.RequestUltimate(actor)) return false;
         Drain(engine);
         return true;
     }

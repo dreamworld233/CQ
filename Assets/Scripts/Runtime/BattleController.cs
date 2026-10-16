@@ -11,7 +11,7 @@ namespace CQ.Runtime
 {
     /// <summary>
     /// 场景驱动桥接：加载配置 → 建 BattleEngine → 生成世界单位 →
-    /// 点选交互（点角色→弧形技能→点目标）+ uGUI HUD（战力条/结束回合）。
+    /// 战前布阵与一键终结技+ uGUI HUD（战力条/结束回合）。
     /// BattleEngine 是唯一战斗状态源；表现层只读、只发指令。
     /// </summary>
     public class BattleController : MonoBehaviour
@@ -31,13 +31,13 @@ namespace CQ.Runtime
         private BattleEngine _engine;
         private readonly Dictionary<string, UnitView> _views = new Dictionary<string, UnitView>();
         private string _selectedActor;
-        private SkillSpec _pendingSkill;   // 待选目标的技能
         private readonly List<string> _log = new List<string>();   // 左栏战报（逐条伤害/治疗）
         private long _logCursor;                                    // 已播报的引擎事件下标
         private Transform _worldRoot;
+        private Transform _slotRoot;
         private Camera _cam;
         private BattleUi _ui;
-        private RadialSkillMenu _radial;
+        private readonly Dictionary<string, string> _savedSlots = new Dictionary<string, string>();
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void EnsureControllerInScene()
@@ -97,19 +97,6 @@ namespace CQ.Runtime
             _ui.OnRestart = () => NewBattle();
             _ui.OnNextLevel = NextLevelAction;
             _ui.OnRetry = () => NewBattle();
-
-            _radial = RadialSkillMenu.Build(transform);
-            _radial.Bind(_ui.CanvasRect, _cam);
-            _radial.OnPick = OnRadialPicked;
-            _radial.OnCancel = () =>
-            {
-                if (_engine != null && _engine.CancelUltimate(_selectedActor))
-                {
-                    RefreshWorld();
-                    RefreshHud();
-                }
-            };
-            _radial.Hide();
         }
 
         // ---------- 点选输入 ----------
@@ -143,12 +130,26 @@ namespace CQ.Runtime
 
             if (overUi) return;
 
-            if (hit == null)
+            // Setup slot discs sit above the unit collider, with their own exact hit area.
+            if (_engine.Flow == BattleFlow.Setup && _selectedActor != null)
             {
-                // 点空白：取消待选目标
-                if (_pendingSkill != null) { _pendingSkill = null; RefreshSelection(); }
-                return;
+                foreach (var slot in _engine.Ctx.FormationOf(Team.Player).Slots)
+                {
+                    var center = PositioningView.Position(Team.Player, slot.Id, layout) + Vector3.up * 0.86f;
+                    var delta = point - (Vector2)center;
+                    if (delta.x * delta.x / (0.48f * 0.48f) + delta.y * delta.y / (0.23f * 0.23f) > 1f) continue;
+                    if (_engine.TryMovePlayer(_selectedActor, slot.Id))
+                    {
+                        SaveFormation();
+                        foreach (var player in _engine.Players)
+                            _views[player.Id].SetPosition(PositioningView.Position(player, layout), player);
+                        RefreshWorld();
+                        RefreshSelection();
+                    }
+                    return;
+                }
             }
+            if (hit == null) return;
 
             var uv = hit.GetComponent<UnitView>();
             if (uv == null) return;
@@ -180,81 +181,38 @@ namespace CQ.Runtime
 
         private void OnUnitTapped(Unit unit)
         {
-            if (unit == null || unit.IsDead || _engine.IsFinished) return;
-
-            if (unit.Team == Team.Player)
+            if (unit == null || unit.IsDead || unit.Team != Team.Player || _engine.IsFinished) return;
+            if (_engine.Flow == BattleFlow.Setup)
             {
-                // 待选目标的单体治疗：点友方 = 定目标，不能把选中角色顶掉
-                if (_pendingSkill != null && NeedsSingleAlly(_pendingSkill))
-                {
-                    TryRequestUltimate(_selectedActor, _pendingSkill.id, unit.Id);
-                    return;   // TryRequestUltimate 内部已刷选择态与 HUD
-                }
-
                 _selectedActor = unit.Id;
-                _pendingSkill = null;
-                ShowRadial(unit.Id);
-            }
-            else
-            {
-                if (_pendingSkill == null) return;
-                else if (NeedsSingleAlly(_pendingSkill))
-                {
-                    Log("此技能点友方");
-                }
-                else
-                {
-                    TryRequestUltimate(_selectedActor, _pendingSkill.id, unit.Id);
-                }
-            }
-            RefreshSelection();
-        }
-
-        private void ShowRadial(string actorId)
-        {
-            if (!_views.TryGetValue(actorId, out var view)) return;
-            var ult = _engine.UltimateOf(actorId);
-            var skills = ult == null ? new List<SkillSpec>() : new List<SkillSpec> { ult };
-            _radial.Show(view.transform.position, skills, s => _engine != null && _engine.CanRequestUltimate(actorId),
-                () => _engine != null && _engine.CanCancelUltimate(actorId),
-                () => _engine != null && _engine.HasUltimateRequest(actorId));
-        }
-
-        private void OnRadialPicked(SkillSpec s)
-        {
-            if (s == null || string.IsNullOrEmpty(_selectedActor) || !_engine.CanRequestUltimate(_selectedActor)) return;
-            if (NeedsTarget(s))
-            {
-                _pendingSkill = s;
-                Log(s.name + "：请点目标");
                 RefreshSelection();
+                Log("已选 " + unit.Name + "，点我方上方格子圆盘移动/交换");
+                return;
             }
-            else
-            {
-                TryRequestUltimate(_selectedActor, s.id, null);
-            }
+            TryRequestUltimate(unit.Id);
         }
 
-        private static bool NeedsSingleEnemy(SkillSpec s) => s.damage != null && s.damage.target == "snipe";
-        private static bool NeedsSingleAlly(SkillSpec s) => s.heal != null && s.heal.target == "single";
-        private static bool NeedsTarget(SkillSpec s) => NeedsSingleEnemy(s) || NeedsSingleAlly(s);
-
-        private void TryRequestUltimate(string actorId, string skillId, string targetId)
+        private void TryRequestUltimate(string actorId)
         {
-            _pendingSkill = null;
-            if (_engine.RequestUltimate(actorId, targetId))
-            {
-                Log(UnitName(actorId) + " " + SkillName(actorId, skillId) + "（已排队）");
-                EnsureDriver();
-            }
-            else
-            {
-                Log("终结技失败（充能/目标不符）");
-            }
-            ShowRadial(actorId);
+            if (_engine == null || !_engine.RequestUltimate(actorId)) return;
+            Log(UnitName(actorId) + " 终结技（已排队）");
+            EnsureDriver();
             RefreshWorld();
-            RefreshSelection();
             RefreshHud();
+        }
+
+        private void SaveFormation()
+        {
+            if (_engine == null) return;
+            foreach (var player in _engine.Players) _savedSlots[player.Id] = player.SlotId;
+        }
+
+        private void RestoreFormation()
+        {
+            // Each desired destination is unique. Moving via swaps also handles cycles of any length.
+            foreach (var player in _engine.Players)
+                if (_savedSlots.TryGetValue(player.Id, out var slot)) _engine.TryMovePlayer(player.Id, slot);
+            SaveFormation();
         }
 
         // ---------- 建局 ----------
@@ -271,11 +229,12 @@ namespace CQ.Runtime
         private void NewBattle()
         {
             StopDriver();
+            SaveFormation();
             _engine = null;
+            _ui.ClearUltimateBindings();
             _log.Clear();
             _logCursor = 0;
-            _pendingSkill = null;
-            if (_radial != null) _radial.Hide();
+            _selectedActor = null;
 
             var chars = ConfigLoader.LoadCharacters();
             var enemies = ConfigLoader.LoadEnemies();
@@ -312,16 +271,13 @@ namespace CQ.Runtime
             var wave = level.waves[0];
             _engine = BattleEngine.Create(seed + _levelIndex, chars.items, wave.enemies, catalog, cards.items,
                 wave.slots, formation.items[0]);
-            _engine.StartBattle();
-
-            _selectedActor = _engine.Players.FirstOrDefault(p => !p.IsDead)?.Id;
+            RestoreFormation();
 
             SpawnWorld();
             RefreshWorld();
             RefreshSelection();
             RefreshHud();
-            Log("开战 " + (_levelIndex + 1) + "/" + _levels.Count + "：" + level.name + "，普攻自动执行，点我方角色释放终结技");
-            if (!string.IsNullOrEmpty(_selectedActor)) ShowRadial(_selectedActor);   // 开局即亮当前角色技能
+            Log("战前布阵：选角色后点我方上方格子圆盘，点占格交换；布阵完成点开战");
         }
 
         private void SpawnWorld()
@@ -331,6 +287,20 @@ namespace CQ.Runtime
             _worldRoot = new GameObject("BattleWorld").transform;
             _worldRoot.SetParent(transform, false);
 
+            _slotRoot = new GameObject("SetupSlots").transform;
+            _slotRoot.SetParent(_worldRoot, false);
+            foreach (Team team in new[] { Team.Player, Team.Enemy })
+                foreach (var slot in _engine.Ctx.FormationOf(team).Slots)
+                {
+                    var go = new GameObject(team + "_" + slot.Id);
+                    go.transform.SetParent(_slotRoot, false);
+                    go.transform.position = PositioningView.Position(team, slot.Id, layout) + Vector3.up * 0.86f;
+                    go.transform.localScale = new Vector3(0.95f, 0.42f, 1f);
+                    var sr = go.AddComponent<SpriteRenderer>();
+                    sr.sprite = UiKit.CircleSprite();
+                    sr.color = team == Team.Player ? new Color(0.3f, 0.8f, 1f, 0.65f) : new Color(1f, 0.4f, 0.3f, 0.5f);
+                    sr.sortingOrder = 1;
+                }
             foreach (var p in _engine.Players) SpawnUnit(p);
             foreach (var e in _engine.Enemies) SpawnUnit(e);
         }
@@ -340,12 +310,13 @@ namespace CQ.Runtime
             var go = new GameObject("Unit_" + unit.Id);
             go.transform.SetParent(_worldRoot, false);
             go.transform.position = PositioningView.Position(unit, layout);
-            // 不缩放根节点：缩放会同时放大碰撞体，造成相邻单位碰撞体重叠、选不中
-            go.transform.localScale = Vector3.one;
+            // Uniformly reduce art/bars/collider to fit both five-slot formations.
+            go.transform.localScale = Vector3.one * 0.72f;
 
             var view = go.AddComponent<UnitView>();
             view.Setup(unit, UnitColor(unit, unit.IsDead));
             _views[unit.Id] = view;
+            if (unit.Team == Team.Player) _ui.BindUltimate(unit.Id, view.transform, _engine, _cam, TryRequestUltimate);
         }
 
         private static Color UnitColor(Unit unit, bool dead)
@@ -362,7 +333,7 @@ namespace CQ.Runtime
             foreach (var u in _engine.Ctx.Units)
             {
                 if (!_views.TryGetValue(u.Id, out var v)) continue;
-                IntentConfig it = (u.Team == Team.Enemy && !u.IsDead) ? _engine.CurrentIntentOf(u.Id) : null;
+                IntentConfig it = (u.Team == Team.Enemy && !u.IsDead && _engine.Flow != BattleFlow.Setup) ? _engine.CurrentIntentOf(u.Id) : null;
                 v.Refresh(u, it != null ? IntentText(it) : "", it != null ? it.type : "");
                 v.SetAppearance(UnitColor(u, u.IsDead), u.IsDead);
             }
@@ -371,17 +342,9 @@ namespace CQ.Runtime
         private void RefreshSelection()
         {
             if (_engine == null) return;
-            bool needEnemy = _pendingSkill != null && NeedsSingleEnemy(_pendingSkill);
-            bool needAlly = _pendingSkill != null && NeedsSingleAlly(_pendingSkill);
             foreach (var u in _engine.Ctx.Units)
-            {
-                if (!_views.TryGetValue(u.Id, out var v)) continue;
-                if (u.IsDead) { v.SetHighlight(0); continue; }
-                if (u.Id == _selectedActor && _pendingSkill == null) { v.SetHighlight(1); continue; }
-                if (needEnemy && u.Team == Team.Enemy) { v.SetHighlight(2); continue; }
-                if (needAlly && u.Team == Team.Player) { v.SetHighlight(2); continue; }
-                v.SetHighlight(0);
-            }
+                if (_views.TryGetValue(u.Id, out var view))
+                    view.SetHighlight(_engine.Flow == BattleFlow.Setup && u.Id == _selectedActor ? 1 : 0);
         }
 
         private void RefreshHud()
@@ -404,7 +367,9 @@ namespace CQ.Runtime
             }
             bool hasNext = HasNextLevel();
             _ui.Refresh(_engine != null ? _engine.Round : 1, order, winner, hasNext ? "下一关 → " + _levels[_levelIndex + 1].name : "", hasNext);
-            _ui.EndRoundButton.interactable = _engine != null && _engine.CanPlayCards;
+            bool setup = _engine != null && _engine.Flow == BattleFlow.Setup;
+            _ui.EndRoundButton.GetComponentInChildren<TMPro.TextMeshProUGUI>().text = setup ? "开战" : "开始行动";
+            _ui.EndRoundButton.interactable = _engine != null && (setup || _engine.CanPlayCards);
             _ui.SetEvent(LogText());
         }
 
@@ -412,7 +377,19 @@ namespace CQ.Runtime
 
         private void BeginActionsAction()
         {
-            if (_engine == null || !_engine.BeginActions()) return;
+            if (_engine == null) return;
+            if (_engine.Flow == BattleFlow.Setup)
+            {
+                SaveFormation();
+                _selectedActor = null;
+                _engine.StartBattle();
+                if (_slotRoot != null) _slotRoot.gameObject.SetActive(false);
+                RefreshWorld();
+                RefreshSelection();
+                RefreshHud();
+                return;
+            }
+            if (!_engine.BeginActions()) return;
             RefreshHud();
             EnsureDriver();
         }

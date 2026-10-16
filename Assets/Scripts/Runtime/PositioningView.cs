@@ -4,54 +4,31 @@ using UnityEngine;
 
 namespace CQ.Runtime
 {
-    /// <summary>
-    /// 阵型布局参数。Play 中可在 BattleController 的 Inspector 里实时调，
-    /// 调好把数值抄回代码默认值即可（不依赖手工场景）。
-    /// </summary>
     [Serializable]
     public class BattleLayout
     {
-        [Tooltip("同侧单位间距（世界单位）。必须大于单位碰撞体宽，否则点选会命中错单位")]
-        public float teamGap = 2.0f;
-
-        [Tooltip("阵型整体右移量，避开左侧行动条")]
-        public float arenaShift = 0.9f;
-
-        [Tooltip("最前排到阵型中心的距离")]
-        public float baseOffset = 1.8f;
-
-        [Tooltip("前排 y（低且近）")]
-        public float frontY = -1.2f;
-
-        [Tooltip("后排 y（高且远）")]
-        public float backY = 1.2f;
+        public float teamGap = 2.8f;
+        public float arenaShift = 1.0f;
+        public float baseOffset = 1.5f;
+        public float frontY = 0f;
+        public float backY = 0f;
     }
 
-    /// <summary>
-    /// 前后排 + 双方站位（2.5D 框架）。玩家右侧、敌方左侧；前排低且近，后排高且远；
-    /// 同侧单位按槽位横排。视觉差异玩法本期不做，只站位。
-    /// </summary>
+    /// <summary>Mirrored two-column formations: player left, enemy right, fronts toward center.</summary>
     public static class PositioningView
     {
-        public static Vector3 Position(Unit unit, BattleLayout layout)
+        public static Vector3 Position(Unit unit, BattleLayout layout) => Position(unit.Team, unit.SlotId, layout);
+
+        public static Vector3 Position(Team team, string slotId, BattleLayout layout)
         {
+            if (!Formation.IsValidSlot(slotId)) throw new ArgumentException("未知阵型槽位: " + slotId, nameof(slotId));
             if (layout == null) layout = new BattleLayout();
-            int slot;
-            switch (unit.SlotId)
-            {
-                case "front1":
-                case "back1": slot = 0; break;
-                case "front2":
-                case "back2": slot = 1; break;
-                case "back3": slot = 2; break;
-                default: throw new ArgumentException("未知阵型槽位: " + unit.SlotId, nameof(unit));
-            }
-            float side = unit.Team == Team.Player ? 1f : -1f;
-            float x = layout.arenaShift + side * (layout.baseOffset + slot * layout.teamGap);
-            bool front = unit.Row == "front";
-            float y = front ? layout.frontY : layout.backY;
-            float z = front ? -0.6f : 0.4f;   // 前排更靠近相机
-            return new Vector3(x, y, z);
+            bool front = Formation.RowOf(slotId) == "front";
+            int index = slotId[slotId.Length - 1] - '1';
+            float side = team == Team.Player ? -1f : 1f;
+            float x = layout.arenaShift + side * (layout.baseOffset + (front ? 0f : 2.5f));
+            float y = (front ? layout.frontY : layout.backY) + ((front ? 0.5f : 1f) - index) * layout.teamGap;
+            return new Vector3(x, y, front ? -0.6f : 0.4f);
         }
     }
 }

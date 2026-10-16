@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using CQ.Core.Battle;
+using CQ.Core.Combat;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -31,6 +34,70 @@ namespace CQ.Runtime
         public Action OnRestart;
         public Action OnNextLevel;
         public Action OnRetry;
+
+        private sealed class UltimateBinding
+        {
+            public string ActorId;
+            public Transform Anchor;
+            public Button Button;
+            public TextMeshProUGUI Label;
+            public BattleEngine Engine;
+            public Camera Camera;
+        }
+        private readonly List<UltimateBinding> _ultimates = new List<UltimateBinding>();
+
+        public void ClearUltimateBindings()
+        {
+            foreach (var binding in _ultimates)
+                if (binding.Button != null)
+                {
+                    binding.Button.onClick.RemoveAllListeners();
+                    binding.Button.gameObject.SetActive(false);
+                    Destroy(binding.Button.gameObject);
+                }
+            _ultimates.Clear();
+        }
+
+        public void BindUltimate(string actorId, Transform anchor, BattleEngine engine, Camera camera, Action<string> request)
+        {
+            var button = UiKit.MakeButton(CanvasRect, "未满", 24, ButtonBg);
+            var rt = (RectTransform)button.transform;
+            rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = new Vector2(144f, 48f);
+            button.onClick.AddListener(() => request(actorId));
+            _ultimates.Add(new UltimateBinding { ActorId = actorId, Anchor = anchor, Engine = engine,
+                Camera = camera, Button = button, Label = button.GetComponentInChildren<TextMeshProUGUI>() });
+        }
+
+        private void LateUpdate()
+        {
+            foreach (var binding in _ultimates)
+            {
+                if (binding.Anchor == null || binding.Camera == null) continue;
+                var engine = binding.Engine;
+                var actor = engine.Ctx.GetUnit(binding.ActorId);
+                bool setup = engine.Flow == BattleFlow.Setup;
+                binding.Button.gameObject.SetActive(!setup);
+                if (setup) continue;
+                bool executing = engine.CurrentAction?.ActorId == binding.ActorId &&
+                    engine.CurrentAction.ActionId == engine.UltimateOf(binding.ActorId)?.id;
+                bool ready = engine.CanRequestUltimate(binding.ActorId);
+                binding.Label.text = engine.IsFinished ? "结束" : actor.IsDead ? "死亡" : executing ? "释放中" :
+                    engine.HasUltimateRequest(binding.ActorId) ? "排队" : ready ? "就绪 · 释放" : "未满";
+                binding.Button.interactable = ready;
+                ((Image)binding.Button.targetGraphic).color = ready ? new Color(0.65f, 0.38f, 0.06f, 1f) : ButtonBg;
+                // Only enabled ready buttons capture input. All other presentation stays click-through.
+                binding.Button.targetGraphic.raycastTarget = ready;
+                var screen = binding.Camera.WorldToScreenPoint(binding.Anchor.position + Vector3.up * 1.06f);
+                var safe = Screen.safeArea;
+                float scale = CanvasRect.GetComponent<Canvas>().scaleFactor;
+                float halfW = 72f * scale, halfH = 24f * scale;
+                screen.x = Mathf.Clamp(screen.x, Mathf.Max(safe.xMin + halfW, 382f * scale + halfW), safe.xMax - halfW);
+                screen.y = Mathf.Clamp(screen.y, safe.yMin + halfH, safe.yMax - halfH);
+                RectTransformUtility.ScreenPointToLocalPointInRectangle(CanvasRect, screen, null, out var local);
+                ((RectTransform)binding.Button.transform).anchoredPosition = local;
+            }
+        }
 
         private static readonly Color PanelBg = new Color(0.07f, 0.10f, 0.14f, 0.92f);
         private static readonly Color ButtonBg = new Color(0.16f, 0.22f, 0.30f, 0.98f);

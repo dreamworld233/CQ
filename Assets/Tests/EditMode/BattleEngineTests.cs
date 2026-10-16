@@ -390,9 +390,9 @@ public class BattleEngineTests
         Assert.IsTrue(eng.RequestUltimate("a")); Assert.AreEqual(0, actor.Ult);
         actor.GainUlt(recharge);
         Assert.IsFalse(eng.RequestUltimate("a"));
-        Assert.IsTrue(eng.CanCancelUltimate("a"));
+        Assert.IsTrue(eng.HasUltimateRequest("a"));
         var ult = eng.Advance(); Assert.IsNotNull(ult); Assert.AreEqual(recharge, actor.Ult);
-        Assert.IsTrue(eng.HasUltimateRequest("a")); Assert.IsFalse(eng.CancelUltimate("a"));
+        Assert.IsTrue(eng.HasUltimateRequest("a"));
         Assert.IsFalse(eng.RequestUltimate("a"));
         Assert.IsTrue(eng.Confirm(eng.BattleId, ult.Sequence));
         Assert.IsFalse(eng.HasUltimateRequest("a"));
@@ -413,43 +413,29 @@ public class BattleEngineTests
     }
 
     [Test]
-    public void Cancel_Refunds_Clamped_Once_And_Requeues_At_Tail()
+    public void Manual_Cancel_And_Explicit_Target_Apis_Are_Removed()
     {
-        var eng = Make(1, new[] { C("a", 100, 10, 1), C("b", 100, 2, 1) }, new[] { E("foe", 1000, 1, 1) });
-        eng.StartBattle(); foreach (var actor in eng.Players) actor.GainUlt(3);
-        Assert.IsTrue(eng.RequestUltimate("a")); Assert.IsTrue(eng.RequestUltimate("b"));
-        eng.Players[0].GainUlt(2);
-        Assert.IsTrue(eng.CancelUltimate("a")); Assert.AreEqual(3, eng.Players[0].Ult);
-        eng.Players[0].GainUlt(-1);
-        Assert.IsFalse(eng.CancelUltimate("a")); Assert.AreEqual(2, eng.Players[0].Ult);
-        eng.Players[0].GainUlt(1); Assert.IsTrue(eng.RequestUltimate("a"));
-        BattleTestDriver.Drain(eng);
-        CollectionAssert.AreEqual(new[] { "b_ult", "a_ult" }, eng.ActionResults.Select(r => r.ActionId));
+        Assert.IsNull(typeof(BattleEngine).GetMethod("CancelUltimate"));
+        Assert.IsNull(typeof(BattleEngine).GetMethod("CanCancelUltimate"));
+        Assert.AreEqual(1, typeof(BattleEngine).GetMethod("RequestUltimate").GetParameters().Length);
+        Assert.AreEqual(3, typeof(SkillResolver).GetMethod("Resolve").GetParameters().Length);
     }
 
-    [TestCase("snipe")]
-    [TestCase("heal")]
-    public void Invalid_Explicit_Target_Is_Rejected_And_Dead_Target_Is_Not_Replaced(string mode)
+    [TestCase(false)]
+    [TestCase(true)]
+    public void Single_Heal_Selects_Current_Lowest_At_Execution_And_Replaces_Dead_Ally(bool dies)
     {
         var config = C("a", 100, 10, 1);
-        var skill = config.skills[1];
-        if (mode == "snipe") skill.damage.target = "snipe";
-        else { skill.damage = null; skill.heal = new HealSpec { target = "single", amount = 10 }; }
-        var eng = Make(1, new[] { config, C("b", 100, 2, 1) },
-            new[] { E("foe", 1000, 1, 1), E("other", 1000, 1, 1) });
+        config.skills[1].damage = null;
+        config.skills[1].heal = new HealSpec { target = "single", amount = 10 };
+        var eng = Make(1, new[] { config, C("b", 100, 2, 1), C("c", 100, 1, 1) }, new[] { E("foe", 1000, 1, 1) });
         eng.StartBattle(); eng.Players[0].GainUlt(3);
-        string target = mode == "snipe" ? "foe_0" : "b";
-        Assert.IsFalse(eng.RequestUltimate("a"));
-        Assert.IsFalse(eng.RequestUltimate("a", mode == "snipe" ? "b" : "foe_0"));
-        Assert.AreEqual(3, eng.Players[0].Ult); Assert.AreEqual(0, eng.PendingUltimateCount);
-        Assert.IsTrue(eng.RequestUltimate("a", target));
-        eng.Ctx.GetUnit(target).TakeDamage(9999);
-        Assert.IsNull(eng.Advance()); Assert.IsFalse(eng.IsFinished);
-        Assert.AreEqual(3, eng.Players[0].Ult); Assert.IsEmpty(eng.ActionResults);
-        Assert.IsFalse(eng.HasUltimateRequest("a"));
-        Assert.IsFalse(eng.CancelUltimate("a"));
-        Assert.IsFalse(eng.RequestUltimate("a", target));
-        Assert.AreEqual(3, eng.Players[0].Ult);
+        eng.Players[1].Hp = 10;
+        Assert.IsTrue(eng.RequestUltimate("a"));
+        eng.Players[1].Hp = dies ? 0 : 90; eng.Players[2].Hp = 20;
+        var result = eng.Advance();
+        Assert.IsNotNull(result); Assert.AreEqual(30, eng.Players[2].Hp);
+        Assert.AreEqual(dies ? 0 : 90, eng.Players[1].Hp); Assert.AreEqual(0, eng.Players[0].Ult);
     }
 
     [Test]
@@ -458,7 +444,7 @@ public class BattleEngineTests
         var config = C("a", 100, 10, 1); config.skills[1].damage.target = "single";
         var eng = Make(1, new[] { config }, new[] { E("foe", 1000, 1, 1), E("other", 1000, 1, 1) });
         eng.StartBattle(); eng.Players[0].GainUlt(3);
-        Assert.IsTrue(eng.RequestUltimate("a", "foe_0"));
+        Assert.IsTrue(eng.RequestUltimate("a"));
         eng.Ctx.FormationOf(Team.Enemy).GetSlot("front2").AddModifier(100, 1);
         var result = eng.Advance();
         Assert.AreEqual("other_1", result.Hits.Single().TargetUnitId);
@@ -473,7 +459,7 @@ public class BattleEngineTests
         eng.Players[0].TakeDamage(999);
         var result = eng.Advance(); Assert.AreEqual("b_ult", result.ActionId);
         Assert.AreEqual(3, eng.Players[0].Ult); Assert.IsFalse(eng.HasUltimateRequest("a"));
-        eng.Players[0].GainUlt(-1); Assert.IsFalse(eng.CancelUltimate("a"));
+        eng.Players[0].GainUlt(-1);
         Assert.AreEqual(2, eng.Players[0].Ult);
         Assert.IsFalse(eng.RequestUltimate("a"));
     }
@@ -513,10 +499,11 @@ public class BattleEngineTests
     [Test]
     public void Dead_Normal_Queue_Entry_Is_Skipped_After_Inserted_Ultimate()
     {
-        var config = C("a", 100, 10, 10); config.skills[1].damage.target = "snipe";
+        var config = C("a", 100, 10, 10); config.skills[1].damage.target = "single";
         var eng = Make(1, new[] { config }, new[] { E("foe", 20, 5, 1), E("other", 1000, 1, 1) });
         eng.StartBattle(); Assert.IsTrue(eng.BeginActions());
-        eng.Players[0].GainUlt(3); Assert.IsTrue(eng.RequestUltimate("a", "foe_0"));
+        eng.Players[0].GainUlt(3); Assert.IsTrue(eng.RequestUltimate("a"));
+        eng.Ctx.FormationOf(Team.Enemy).GetSlot("front1").AddModifier(100, 1);
         BattleTestDriver.Drain(eng);
         Assert.IsFalse(eng.ActionResults.Any(r => r.ActorId == "foe_0"));
         Assert.AreEqual(1, eng.ActionResults.Count(r => r.ActionId == "a_basic"));
@@ -554,8 +541,7 @@ public class BattleEngineTests
                 {
                     a.Players[1].GainUlt(3); b.Players[1].GainUlt(3);
                     Assert.IsTrue(a.RequestUltimate("b")); Assert.IsTrue(b.RequestUltimate("b"));
-                    Assert.IsTrue(a.CancelUltimate("b")); Assert.IsTrue(b.CancelUltimate("b"));
-                    Assert.IsTrue(a.RequestUltimate("b")); Assert.IsTrue(b.RequestUltimate("b"));
+                    Assert.IsFalse(a.RequestUltimate("b")); Assert.IsFalse(b.RequestUltimate("b"));
                 }
                 Assert.IsTrue(a.Confirm(a.BattleId, left.Sequence)); Assert.IsTrue(b.Confirm(b.BattleId, right.Sequence));
                 Assert.Less(step, 99);
@@ -574,7 +560,7 @@ public class BattleEngineTests
         Assert.IsTrue(eng.RequestUltimate("a"));
         var current = eng.Advance(); eng.Players[0].GainUlt(3);
         Assert.IsTrue(eng.RequestUltimate("b"));
-        Assert.IsFalse(eng.RequestUltimate("a")); Assert.IsFalse(eng.CancelUltimate("a"));
+        Assert.IsFalse(eng.RequestUltimate("a"));
         Assert.IsTrue(eng.Confirm(eng.BattleId, current.Sequence));
         Assert.IsTrue(eng.RequestUltimate("a"));
         BattleTestDriver.Drain(eng);
@@ -617,7 +603,7 @@ public class BattleEngineTests
         foreach (var actor in eng.Players)
         {
             Assert.AreEqual(3, actor.Ult); Assert.IsFalse(eng.HasUltimateRequest(actor.Id));
-            actor.GainUlt(-1); Assert.IsFalse(eng.CancelUltimate(actor.Id));
+            actor.GainUlt(-1);
         }
         Assert.IsNull(eng.Advance()); Assert.IsNull(eng.Advance());
         Assert.IsTrue(eng.Players.All(actor => actor.Ult == 2));
@@ -677,7 +663,7 @@ public class BattleEngineTests
     }
 
     [Test]
-    public void HealSingle_Heals_Selected_Ally_Rejects_Enemy()
+    public void HealSingle_Automatically_Heals_Lowest_Ally()
     {
         var healer = new CharacterConfig
         {
@@ -705,11 +691,81 @@ public class BattleEngineTests
         eng.Ctx.GetUnit("buddy").TakeDamage(50);
 
         eng.Players[0].GainUlt(3);
-        Assert.IsFalse(BattleTestDriver.RequestAndPlay(eng, "healer", "foe_0"), "治疗不可指向敌方");
-        Assert.IsTrue(BattleTestDriver.RequestAndPlay(eng, "healer", "buddy"), "治疗应能选友方");
+        Assert.IsTrue(BattleTestDriver.RequestAndPlay(eng, "healer"));
 
         BattleTestDriver.CompleteRound(eng);
 
         Assert.AreEqual(50, eng.Ctx.GetUnit("buddy").Hp, "治疗回 30→50");
     }
+    private static void AssertFormation(BattleEngine eng)
+    {
+        foreach (var team in new[] { Team.Player, Team.Enemy })
+        {
+            var formation = eng.Ctx.FormationOf(team);
+            foreach (var unit in eng.Ctx.Units.Where(u => u.Team == team))
+                Assert.AreSame(unit, formation.GetSlot(unit.SlotId).Occupant);
+            foreach (var slot in formation.Slots)
+                if (slot.Occupant != null)
+                {
+                    Assert.AreEqual(team, slot.Occupant.Team);
+                    Assert.AreEqual(slot.Id, slot.Occupant.SlotId);
+                }
+        }
+    }
+
+    [Test]
+    public void Setup_Move_Swap_And_Invalid_Moves_Preserve_Both_Sides_Of_Occupancy()
+    {
+        var eng = Make(1, new[] { C("a", 100, 10, 1), C("b", 100, 2, 1) }, new[] { E("foe", 1000, 1, 1) });
+        Assert.AreEqual(BattleFlow.Setup, eng.Flow);
+        Assert.IsFalse(eng.RequestUltimate("a")); Assert.IsFalse(eng.BeginActions());
+        Assert.IsTrue(eng.TryMovePlayer("a", "back3"));
+        Assert.IsNull(eng.Ctx.FormationOf(Team.Player).GetSlot("front1").Occupant);
+        AssertFormation(eng);
+        Assert.IsTrue(eng.TryMovePlayer("b", "back3"));
+        Assert.AreEqual("front2", eng.Players[0].SlotId);
+        Assert.AreEqual("back3", eng.Players[1].SlotId);
+        AssertFormation(eng);
+        var before = string.Join(";", eng.Ctx.Units.Select(u => u.Id + u.SlotId));
+        foreach (var actor in new[] { null, "missing", "foe_0" }) Assert.IsFalse(eng.TryMovePlayer(actor, "front1"));
+        foreach (var slot in new[] { null, "", "enemy/front1", "front3" }) Assert.IsFalse(eng.TryMovePlayer("a", slot));
+        Assert.AreEqual(before, string.Join(";", eng.Ctx.Units.Select(u => u.Id + u.SlotId)));
+        AssertFormation(eng);
+        Assert.IsTrue(eng.TryMovePlayer("a", "front2")); AssertFormation(eng);
+        eng.Ctx.FormationOf(Team.Player).GetSlot("front2").AddModifier(30, 1);
+        Assert.IsTrue(eng.TryMovePlayer("a", "back1"));
+        Assert.AreEqual(50, eng.Ctx.EffectiveTaunt(eng.Players[0]));
+        Assert.AreEqual(100, eng.Ctx.FormationOf(Team.Player).GetSlot("front2").BaseTaunt);
+        eng.StartBattle(); Assert.IsFalse(eng.TryMovePlayer("a", "front1"));
+        Assert.IsTrue(eng.BeginActions()); Assert.IsFalse(eng.TryMovePlayer("a", "front1"));
+        AssertFormation(eng);
+    }
+
+    [Test]
+    public void Controller_Restores_Cyclic_Formation_Into_Fresh_Slots_Without_Effects()
+    {
+        var chars = new[] { C("a", 100, 10, 1), C("b", 100, 2, 1), C("c", 100, 1, 1) };
+        var old = Make(1, chars, new[] { E("foe", 1000, 1, 1) });
+        Assert.IsTrue(old.TryMovePlayer("a", "front2")); Assert.IsTrue(old.TryMovePlayer("b", "back1"));
+        old.Ctx.FormationOf(Team.Player).GetSlot("front2").AddModifier(900, 3);
+        var go = new UnityEngine.GameObject("FormationRestoreTest");
+        try
+        {
+            var controller = go.AddComponent<CQ.Runtime.BattleController>();
+            var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var type = typeof(CQ.Runtime.BattleController);
+            type.GetField("_engine", flags).SetValue(controller, old);
+            type.GetMethod("SaveFormation", flags).Invoke(controller, null);
+            var fresh = Make(2, chars, new[] { E("foe", 1000, 1, 1) });
+            type.GetField("_engine", flags).SetValue(controller, fresh);
+            type.GetMethod("RestoreFormation", flags).Invoke(controller, null);
+            CollectionAssert.AreEqual(old.Players.Select(u => u.SlotId), fresh.Players.Select(u => u.SlotId));
+            AssertFormation(fresh);
+            Assert.AreEqual(BattleFlow.Setup, fresh.Flow);
+            Assert.AreEqual(100, fresh.Ctx.FormationOf(Team.Player).GetSlot("front2").EffectiveTaunt);
+            Assert.AreNotSame(old.Ctx.FormationOf(Team.Player).GetSlot("front2"), fresh.Ctx.FormationOf(Team.Player).GetSlot("front2"));
+        }
+        finally { UnityEngine.Object.DestroyImmediate(go); }
+    }
+
 }

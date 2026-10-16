@@ -75,6 +75,22 @@ namespace CQ.Core.Combat
             if (slot.Occupant != null) throw new ArgumentException("槽位重复: " + Team + "/" + unit.SlotId);
             slot.Occupant = unit;
         }
+        /// <summary>Validate everything before updating either side of a move/swap.</summary>
+        public bool TryMove(Unit unit, string destination)
+        {
+            if (unit == null || unit.Team != Team) return false;
+            var source = GetSlot(unit.SlotId);
+            var target = GetSlot(destination);
+            if (source == null || target == null || !ReferenceEquals(source.Occupant, unit)) return false;
+            var other = target.Occupant;
+            if (other != null && (other.Team != Team || other.SlotId != target.Id)) return false;
+            source.Occupant = other;
+            target.Occupant = unit;
+            if (other != null) other.SlotId = source.Id;
+            unit.SlotId = target.Id;
+            return true;
+        }
+
         public void Tick()
         {
             foreach (var slot in _slots) slot.Tick();

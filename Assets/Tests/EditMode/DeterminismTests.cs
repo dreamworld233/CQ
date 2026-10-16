@@ -123,7 +123,7 @@ public class DeterminismTests
         if (target == null) { BattleTestDriver.CompleteRound(e); return; }
         foreach (var p in e.Players)
             if (!p.IsDead)
-                BattleTestDriver.RequestAndPlay(e, p.Id, target.Id);
+                BattleTestDriver.RequestAndPlay(e, p.Id);
         BattleTestDriver.CompleteRound(e);
     }
 
