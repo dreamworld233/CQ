@@ -161,14 +161,12 @@ namespace CQ.Runtime
                 return;
             }
 
-            // Setup slot discs sit above the unit collider, with their own exact hit area.
+            // Slot targets take priority over overlapping unit colliders during placement.
             if (_engine.Flow == BattleFlow.Setup && _selectedActor != null)
             {
                 foreach (var slot in _engine.Ctx.FormationOf(Team.Player).Slots)
                 {
-                    var center = PositioningView.Position(Team.Player, slot.Id, layout) + Vector3.up * 0.86f;
-                    var delta = point - (Vector2)center;
-                    if (delta.x * delta.x / (0.48f * 0.48f) + delta.y * delta.y / (0.23f * 0.23f) > 1f) continue;
+                    if (!SlotContainsPoint(Team.Player, slot.Id, point)) continue;
                     if (_engine.TryMovePlayer(_selectedActor, slot.Id))
                     {
                         SaveFormation();
@@ -187,9 +185,12 @@ namespace CQ.Runtime
             OnUnitTapped(_engine.Ctx.GetUnit(uv.UnitId));
         }
 
+        private Vector3 SlotTargetPosition(Team team, string slotId) =>
+            PositioningView.Position(team, slotId, layout) + Vector3.down * (0.78f * 0.72f);
+
         private bool SlotContainsPoint(Team team, string slotId, Vector2 point)
         {
-            var center = PositioningView.Position(team, slotId, layout) + Vector3.up * 0.86f;
+            var center = SlotTargetPosition(team, slotId);
             var delta = point - (Vector2)center;
             return delta.x * delta.x / (0.48f * 0.48f) + delta.y * delta.y / (0.23f * 0.23f) <= 1f;
         }
@@ -269,7 +270,7 @@ namespace CQ.Runtime
             {
                 _selectedActor = unit.Id;
                 RefreshSelection();
-                Log("已选 " + unit.Name + "，点我方上方格子圆盘移动/交换");
+                Log("已选 " + unit.Name + "，点我方脚下格子圆盘移动/交换");
                 return;
             }
             TryRequestUltimate(unit.Id);
@@ -364,7 +365,7 @@ namespace CQ.Runtime
             RefreshWorld();
             RefreshSelection();
             RefreshHud();
-            Log("战前布阵：选角色后点我方上方格子圆盘，点占格交换；布阵完成点开战");
+            Log("战前布阵：选角色后点我方脚下格子圆盘，点占格交换；布阵完成点开战");
         }
 
         private void SpawnWorld()
@@ -382,7 +383,7 @@ namespace CQ.Runtime
                 {
                     var go = new GameObject(team + "_" + slot.Id);
                     go.transform.SetParent(_slotRoot, false);
-                    go.transform.position = PositioningView.Position(team, slot.Id, layout) + Vector3.up * 0.86f;
+                    go.transform.position = SlotTargetPosition(team, slot.Id);
                     go.transform.localScale = new Vector3(0.95f, 0.42f, 1f);
                     var sr = go.AddComponent<SpriteRenderer>();
                     sr.sprite = UiKit.CircleSprite();
@@ -693,12 +694,9 @@ namespace CQ.Runtime
             PushLog(msg);
         }
 
-        private const int LogMax = 7;   // 左栏战报最多保留行数（更多会顶掉最旧一条；行长会折行，故不宜多）
-
         private void PushLog(string msg)
         {
             _log.Add(msg);
-            while (_log.Count > LogMax) _log.RemoveAt(0);
             RefreshHud();
         }
 

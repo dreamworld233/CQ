@@ -49,6 +49,7 @@ namespace CQ.Runtime
         private bool _cardTargeting;
         private RectTransform _handContent;
         private ScrollRect _handScroll;
+        private ScrollRect _eventScroll;
         private TextMeshProUGUI _handHint;
         private Button _cancelCard;
         private readonly List<Button> _handButtons = new List<Button>();
@@ -200,9 +201,38 @@ namespace CQ.Runtime
             var logTitle = UiKit.MakeText(panelRt, "战报", 30, new Color(0.75f, 0.80f, 0.85f), TextAnchor.MiddleLeft);
             Rect((RectTransform)logTitle.transform, 0f, 0f, 0f, 0f, new Vector2(18f, 382f), new Vector2(inner, 34f));
 
-            EventText = UiKit.MakeText(panelRt, "", 24, new Color(1f, 0.88f, 0.55f), TextAnchor.LowerLeft);
+            var viewport = UiKit.AddRect(panelRt, "EventViewport", Vector2.zero, Vector2.zero,
+                Vector2.zero, new Vector2(18f, 20f), new Vector2(inner - 18f, 352f));
+            viewport.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
+            viewport.gameObject.AddComponent<RectMask2D>();
+            EventText = UiKit.MakeText(viewport, "", 24, new Color(1f, 0.88f, 0.55f), TextAnchor.UpperLeft);
             EventText.enableWordWrapping = true;
-            Rect((RectTransform)EventText.transform, 0f, 0f, 0f, 0f, new Vector2(18f, 20f), new Vector2(inner, 352f));
+            var content = (RectTransform)EventText.transform;
+            content.anchorMin = new Vector2(0f, 1f);
+            content.anchorMax = Vector2.one;
+            content.pivot = new Vector2(0f, 1f);
+            content.anchoredPosition = Vector2.zero;
+            content.sizeDelta = new Vector2(0f, 352f);
+            _eventScroll = viewport.gameObject.AddComponent<ScrollRect>();
+            _eventScroll.viewport = viewport;
+            _eventScroll.content = content;
+            _eventScroll.horizontal = false;
+            _eventScroll.vertical = true;
+            _eventScroll.movementType = ScrollRect.MovementType.Clamped;
+            _eventScroll.scrollSensitivity = 36f;
+
+            var bar = UiKit.AddRect(panelRt, "EventScrollbar", Vector2.zero, Vector2.zero,
+                Vector2.zero, new Vector2(PanelW - 28f, 20f), new Vector2(10f, 352f));
+            bar.gameObject.AddComponent<Image>().color = ButtonBg;
+            var handle = UiKit.AddRect(bar, "Handle", Vector2.zero, Vector2.one,
+                Vector2.zero, Vector2.zero, Vector2.zero);
+            var handleImage = handle.gameObject.AddComponent<Image>();
+            handleImage.color = new Color(0.4f, 0.65f, 0.8f);
+            var scrollbar = bar.gameObject.AddComponent<Scrollbar>();
+            scrollbar.handleRect = handle;
+            scrollbar.targetGraphic = handleImage;
+            scrollbar.direction = Scrollbar.Direction.BottomToTop;
+            _eventScroll.verticalScrollbar = scrollbar;
 
             WinnerText = UiKit.MakeText(panelRt, "", 46, Color.white, TextAnchor.MiddleCenter, true);
             Rect((RectTransform)WinnerText.transform, 0.5f, 0.5f, 0.5f, 0.5f, new Vector2(0f, 0f), new Vector2(inner, 60f));
@@ -396,7 +426,17 @@ namespace CQ.Runtime
         /// <summary>战报文本（已按行拼好的整段）。</summary>
         public void SetEvent(string msg)
         {
+            if (EventText.text == msg) return;
+            bool appended = !string.IsNullOrEmpty(EventText.text) && msg.StartsWith(EventText.text, StringComparison.Ordinal);
+            bool followLatest = !appended || _eventScroll.verticalNormalizedPosition <= 0.01f;
+            float previousOffset = _eventScroll.content.anchoredPosition.y;
             EventText.text = msg;
+            float height = EventText.GetPreferredValues(msg, _eventScroll.viewport.rect.width, Mathf.Infinity).y;
+            _eventScroll.content.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical,
+                Mathf.Max(_eventScroll.viewport.rect.height, height));
+            _eventScroll.StopMovement();
+            if (followLatest) _eventScroll.verticalNormalizedPosition = 0f;
+            else _eventScroll.content.anchoredPosition = new Vector2(0f, previousOffset);
         }
     }
 }

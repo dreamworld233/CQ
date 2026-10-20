@@ -925,6 +925,31 @@ public class BattleEngineTests
     }
 
     [Test]
+    public void Slot_Target_Hit_Area_Is_At_Feet_Not_Above_Unit()
+    {
+        var go = new UnityEngine.GameObject("SlotTargetTest");
+        try
+        {
+            var controller = go.AddComponent<CQ.Runtime.BattleController>();
+            var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var type = typeof(CQ.Runtime.BattleController);
+            var position = type.GetMethod("SlotTargetPosition", flags);
+            var contains = type.GetMethod("SlotContainsPoint", flags);
+            foreach (var team in new[] { Team.Player, Team.Enemy })
+                foreach (var slotId in new[] { "front1", "front2", "back1", "back2", "back3" })
+                {
+                    var center = (UnityEngine.Vector3)position.Invoke(controller, new object[] { team, slotId });
+                    var unit = center + UnityEngine.Vector3.up * (0.78f * 0.72f);
+                    Assert.Less(center.y, unit.y);
+                    Assert.IsTrue((bool)contains.Invoke(controller, new object[] { team, slotId, (UnityEngine.Vector2)center }));
+                    Assert.IsFalse((bool)contains.Invoke(controller, new object[] { team, slotId,
+                        (UnityEngine.Vector2)(unit + UnityEngine.Vector3.up * 0.86f) }));
+                }
+        }
+        finally { UnityEngine.Object.DestroyImmediate(go); }
+    }
+
+    [Test]
     public void Controller_Restores_Cyclic_Formation_Into_Fresh_Slots_Without_Effects()
     {
         var chars = new[] { C("a", 100, 10, 1), C("b", 100, 2, 1), C("c", 100, 1, 1) };

@@ -90,6 +90,43 @@ public class FontAssetTests
         Assert.Greater(text.textInfo.characterCount, 0, "uGUI 文本应栅格化出字形");
     }
 
+    [Test]
+    public void Battle_Log_Scrolls_Within_Viewport_And_Preserves_History_Position()
+    {
+        var existingEventSystem = UnityEngine.EventSystems.EventSystem.current;
+        var owner = new GameObject("BattleLogTest");
+        _spawned.Add(owner);
+        var ui = BattleUi.Build(owner.transform);
+        typeof(BattleUi).GetMethod("Awake", System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.NonPublic).Invoke(ui, null);
+        if (existingEventSystem == null && UnityEngine.EventSystems.EventSystem.current != null)
+            _spawned.Add(UnityEngine.EventSystems.EventSystem.current.gameObject);
+        Canvas.ForceUpdateCanvases();
+        var scroll = ui.EventText.GetComponentInParent<ScrollRect>();
+        Assert.IsNotNull(scroll);
+        Assert.IsTrue(scroll.vertical);
+        Assert.IsFalse(scroll.horizontal);
+        Assert.IsNotNull(scroll.viewport.GetComponent<RectMask2D>());
+        Assert.IsTrue(scroll.viewport.GetComponent<Image>().raycastTarget);
+        Assert.IsNotNull(scroll.verticalScrollbar);
+
+        string history = string.Join("\n", System.Linq.Enumerable.Repeat("战报：剑士攻击敌人，造成伤害。", 40));
+        ui.SetEvent(history);
+        Assert.Greater(scroll.content.rect.height, scroll.viewport.rect.height);
+        Assert.That(scroll.verticalNormalizedPosition, Is.EqualTo(0f).Within(0.001f));
+        scroll.verticalNormalizedPosition = 1f;
+        float offset = scroll.content.anchoredPosition.y;
+        ui.SetEvent(history + "\n新战报");
+        Assert.That(scroll.content.anchoredPosition.y, Is.EqualTo(offset).Within(0.01f));
+        ui.SetEvent(history + "\n新战报");
+        Assert.That(scroll.content.anchoredPosition.y, Is.EqualTo(offset).Within(0.01f));
+        scroll.verticalNormalizedPosition = 0f;
+        ui.SetEvent(history + "\n新战报\n最新战报");
+        Assert.That(scroll.verticalNormalizedPosition, Is.EqualTo(0f).Within(0.001f));
+        ui.SetEvent("新一局");
+        Assert.That(scroll.content.rect.height, Is.EqualTo(scroll.viewport.rect.height).Within(0.01f));
+    }
+
     /// <summary>
     /// demo 全部可能显示的文案都必须有字形，否则 TMP 会退化成 □ 并刷
     /// 「The character with Unicode value \uXXXX was not found ...」警告。
