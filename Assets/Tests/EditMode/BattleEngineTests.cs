@@ -4,6 +4,7 @@ using System.Linq;
 using CQ.Core.Battle;
 using CQ.Core.Combat;
 using CQ.Core.Config;
+using CQ.Core.Cards;
 
 public class BattleEngineTests
 {
@@ -180,18 +181,194 @@ public class BattleEngineTests
     }
 
     [Test]
-    public void Draw_OnePerRound_CapsAtDeckSize()
+    public void Opening_Draws_Two_Only_Once_And_Stops_At_Deck_Size()
     {
-        var bag = E("bag", 99999, 1, 0);
-        var eng = Make(1, new[] { C("sword", 100, 10, 12) }, new[] { bag }, Interrupt(2));
+        var eng = Make(1, new[] { C("sword", 100, 10, 12) }, new[] { E("bag", 99999, 1, 0) }, Interrupt(2));
         eng.StartBattle();
-
-        Assert.AreEqual(1, eng.Hand.Count, "首回合抽 1");
-
+        Assert.AreEqual(2, eng.Hand.Count);
+        eng.StartBattle();
+        Assert.AreEqual(2, eng.Hand.Count);
         BattleTestDriver.CompleteRound(eng);
-        BattleTestDriver.CompleteRound(eng);
+        Assert.AreEqual(2, eng.Hand.Count);
+        Assert.AreEqual(0, eng.Deck.DrawPileCount);
+    }
 
-        Assert.AreEqual(2, eng.Hand.Count, "抽牌堆空且弃牌空，手牌封顶在卡组总数");
+    [Test]
+    public void Full_Hand_Skips_Round_Draw_And_Playing_Does_Not_Refill()
+    {
+        var eng = Make(1, new[] { C("sword", 100, 10, 1) }, new[] { E("bag", 99999, 1, 0) }, Interrupt(5));
+        eng.StartBattle();
+        Assert.AreEqual(2, eng.Hand.Count);
+        Assert.AreEqual(3, eng.Deck.DrawPileCount);
+        BattleTestDriver.CompleteRound(eng);
+        Assert.AreEqual(3, eng.Hand.Count);
+        Assert.AreEqual(2, eng.Deck.DrawPileCount);
+        BattleTestDriver.CompleteRound(eng);
+        Assert.AreEqual(3, eng.Hand.Count);
+        Assert.AreEqual(2, eng.Deck.DrawPileCount);
+        Assert.IsTrue(eng.PlayCard(0, eng.Enemies[0].Id));
+        Assert.AreEqual(2, eng.Hand.Count);
+        Assert.AreEqual(2, eng.Deck.DrawPileCount);
+        Assert.AreEqual(1, eng.Deck.DiscardPileCount);
+        BattleTestDriver.CompleteRound(eng);
+        Assert.AreEqual(3, eng.Hand.Count);
+        Assert.AreEqual(1, eng.Deck.DrawPileCount);
+    }
+
+    [Test]
+    public void Multiple_Cards_Can_Be_Played_Without_Immediate_Refill()
+    {
+        var eng = Make(1, new[] { C("sword", 100, 10, 1) }, new[] { E("bag", 99999, 1, 0) }, Interrupt(5));
+        eng.StartBattle();
+        Assert.IsTrue(eng.PlayCard(0, eng.Enemies[0].Id));
+        Assert.IsTrue(eng.PlayCard(0, eng.Enemies[0].Id));
+        Assert.IsEmpty(eng.Hand);
+        Assert.AreEqual(3, eng.Deck.DrawPileCount);
+        Assert.AreEqual(2, eng.Deck.DiscardPileCount);
+        BattleTestDriver.CompleteRound(eng);
+        Assert.AreEqual(1, eng.Hand.Count);
+        Assert.AreEqual(2, eng.Deck.DrawPileCount);
+    }
+
+    [Test]
+    public void Deck_Draw_Caps_At_Three_Without_Discarding_Overflow()
+    {
+        var deck = new Deck(new Rng(7), new[] { ("card", 5) });
+        deck.Draw(100);
+        Assert.AreEqual(Deck.MaxHandSize, deck.Hand.Count);
+        Assert.AreEqual(2, deck.DrawPileCount);
+        Assert.AreEqual(0, deck.DiscardPileCount);
+    }
+
+    [Test]
+    public void Deck_Full_Hand_Does_Not_Reshuffle_Discard_Or_Consume_Randomness()
+    {
+        var rng = new Rng(7);
+        var control = new Rng(7);
+        var deck = new Deck(rng, new[] { ("card", 4) });
+        var other = new Deck(control, new[] { ("card", 4) });
+        foreach (var d in new[] { deck, other })
+        {
+            d.Draw(3);
+            d.Play(0);
+            d.Draw(1);
+        }
+        deck.Draw(10);
+        Assert.AreEqual(3, deck.Hand.Count);
+        Assert.AreEqual(0, deck.DrawPileCount);
+        Assert.AreEqual(1, deck.DiscardPileCount);
+        Assert.AreEqual(control.NextULong(), rng.NextULong());
+    }
+
+    [TestCase(-1)]
+    [TestCase(2)]
+    [TestCase(int.MaxValue)]
+    public void Deck_Invalid_Play_And_Remove_Preserve_All_Piles_And_Randomness(int index)
+    {
+        var rng = new Rng(7);
+        var control = new Rng(7);
+        var deck = new Deck(rng, new[] { ("card", 4) });
+        var other = new Deck(control, new[] { ("card", 4) });
+        deck.Draw(2);
+        other.Draw(2);
+        var hand = deck.Hand.ToArray();
+        Assert.IsNull(deck.Play(index));
+        Assert.IsNull(deck.Remove(index));
+        CollectionAssert.AreEqual(hand, deck.Hand);
+        Assert.AreEqual(2, deck.DrawPileCount);
+        Assert.AreEqual(0, deck.DiscardPileCount);
+        Assert.AreEqual(control.NextULong(), rng.NextULong());
+    }
+
+    [Test]
+    public void Deck_Remove_Consumes_Only_One_Copy_And_Never_Recycles_It()
+    {
+        var deck = new Deck(new Rng(7), new[] { ("slag", 2) });
+        deck.Draw(2);
+        Assert.AreEqual("slag", deck.Remove(0));
+        CollectionAssert.AreEqual(new[] { "slag" }, deck.Hand);
+        Assert.AreEqual(0, deck.DiscardPileCount);
+        Assert.AreEqual("slag", deck.Play(0));
+        for (int i = 0; i < 4; i++)
+        {
+            deck.Draw(3);
+            CollectionAssert.AreEqual(new[] { "slag" }, deck.Hand);
+            Assert.AreEqual(0, deck.DrawPileCount);
+            Assert.AreEqual("slag", deck.Play(0));
+            Assert.AreEqual(1, deck.DiscardPileCount);
+        }
+    }
+
+    [Test]
+    public void Deck_Injection_Does_Not_Draw_Or_Reshuffle_Discard_Even_When_Full()
+    {
+        var deck = new Deck(new Rng(7), new[] { ("card", 4) });
+        deck.Draw(3);
+        deck.Play(0);
+        deck.Draw(1);
+        var hand = deck.Hand.ToArray();
+        deck.InsertIntoDrawPile("lightning");
+        deck.InsertIntoDrawPile("slag");
+        deck.Draw(1);
+        CollectionAssert.AreEqual(hand, deck.Hand);
+        Assert.AreEqual(2, deck.DrawPileCount);
+        Assert.AreEqual(1, deck.DiscardPileCount);
+        deck.Remove(0);
+        deck.Draw(1);
+        Assert.Contains(deck.Hand.Last(), new[] { "lightning", "slag" });
+        Assert.AreEqual(1, deck.DiscardPileCount);
+    }
+
+    [Test]
+    public void Deck_Injected_Skill_Joins_Later_Discard_Reshuffles()
+    {
+        var deck = new Deck(new Rng(7), new (string id, int count)[0]);
+        deck.InsertIntoDrawPile("heal");
+        for (int i = 0; i < 4; i++)
+        {
+            deck.Draw(1);
+            CollectionAssert.AreEqual(new[] { "heal" }, deck.Hand);
+            Assert.AreEqual(0, deck.DrawPileCount);
+            Assert.AreEqual(0, deck.DiscardPileCount);
+            Assert.AreEqual("heal", deck.Play(0));
+            Assert.AreEqual(1, deck.DiscardPileCount);
+        }
+    }
+
+    [Test]
+    public void Deck_Random_Insertion_Preserves_Existing_Order_And_Duplicate_Copies()
+    {
+        foreach (long seed in new long[] { 1, 7, 17, 37, 73 })
+        {
+            var defs = new[] { ("a", 1), ("b", 1), ("c", 1), ("d", 1) };
+            var rng = new Rng(seed);
+            var control = new Rng(seed);
+            var deck = new Deck(rng, defs);
+            var other = new Deck(control, defs);
+            var expected = new List<string>();
+            while (other.DrawPileCount > 0)
+            {
+                other.Draw(1);
+                expected.Insert(0, other.Remove(0));
+            }
+            for (int i = 0; i < 3; i++)
+            {
+                expected.Insert(control.NextInt(expected.Count + 1), "heal");
+                deck.InsertIntoDrawPile("heal");
+            }
+            Assert.AreEqual(7, deck.DrawPileCount);
+            var actual = new List<string>();
+            while (deck.DrawPileCount > 0)
+            {
+                deck.Draw(1);
+                actual.Add(deck.Remove(0));
+            }
+            expected.Reverse();
+            CollectionAssert.AreEqual(expected, actual);
+            Assert.AreEqual(3, actual.Count(id => id == "heal"));
+            Assert.AreEqual(0, deck.Hand.Count + deck.DrawPileCount + deck.DiscardPileCount);
+            Assert.AreEqual(control.NextULong(), rng.NextULong());
+        }
     }
 
     [Test]
@@ -285,7 +462,7 @@ public class BattleEngineTests
         Assert.IsTrue(eng.Confirm(eng.BattleId, result.Sequence));
         Assert.IsNull(eng.Advance()); Assert.IsNull(eng.Advance());
         Assert.AreEqual(0, eng.Round); Assert.AreEqual(1, eng.ActionResults.Count);
-        Assert.AreEqual(1, eng.Hand.Count);
+        Assert.AreEqual(2, eng.Hand.Count);
         Assert.IsTrue(eng.PlayCard(0, "foe_0"));
     }
 
@@ -366,14 +543,14 @@ public class BattleEngineTests
         eng.Players[0].GainUlt(3);
         if (afterConfirm) Assert.IsTrue(eng.Confirm(eng.BattleId, last.Sequence));
         Assert.IsTrue(eng.RequestUltimate("a"));
-        Assert.AreEqual(1, eng.Hand.Count);
+        Assert.AreEqual(2, eng.Hand.Count);
         if (!afterConfirm) Assert.IsTrue(eng.Confirm(eng.BattleId, last.Sequence));
         var ult = eng.Advance(); Assert.AreEqual("a_ult", ult.ActionId);
         Assert.AreEqual(2, eng.Ctx.FindStatus("a", StatusType.AttackUp).Duration);
-        Assert.AreEqual(1, eng.Hand.Count);
+        Assert.AreEqual(2, eng.Hand.Count);
         Assert.IsTrue(eng.Confirm(eng.BattleId, ult.Sequence));
         Assert.IsNull(eng.Advance()); Assert.IsNull(eng.Advance());
-        Assert.AreEqual(BattleFlow.Input, eng.Flow); Assert.AreEqual(2, eng.Hand.Count);
+        Assert.AreEqual(BattleFlow.Input, eng.Flow); Assert.AreEqual(3, eng.Hand.Count);
         Assert.AreEqual(1, eng.Ctx.FindStatus("a", StatusType.AttackUp).Duration);
         Assert.AreEqual(120, eng.Ctx.EffectiveTaunt(eng.Players[0]));
         Assert.IsTrue(eng.BeginActions()); BattleTestDriver.Drain(eng);
@@ -599,7 +776,7 @@ public class BattleEngineTests
         else foreach (var actor in eng.Players) actor.TakeDamage(9999);
         Assert.IsNull(eng.Advance()); Assert.IsTrue(eng.IsFinished);
         Assert.AreEqual(playerWins ? Team.Player : Team.Enemy, eng.Winner);
-        Assert.AreEqual(0, eng.PendingUltimateCount); Assert.AreEqual(1, eng.Hand.Count);
+        Assert.AreEqual(0, eng.PendingUltimateCount); Assert.AreEqual(2, eng.Hand.Count);
         foreach (var actor in eng.Players)
         {
             Assert.AreEqual(3, actor.Ult); Assert.IsFalse(eng.HasUltimateRequest(actor.Id));

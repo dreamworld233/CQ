@@ -202,13 +202,13 @@ namespace CQ.Core.Battle
                 Ctx.FormationOf(Team.Player).TryMove(unit, slotId);
         }
 
-        /// <summary>开局：意图亮（首轮游标已是 0）+ 抽 1 张，开放输入。</summary>
+        /// <summary>开局：意图亮（首轮游标已是 0）+ 抽 2 张，开放输入。</summary>
         public void StartBattle()
         {
             if (_started) return;
             _started = true;
             _lastOrder = new List<Unit>();
-            Deck.Draw(1);
+            Deck.Draw(2);
             Flow = BattleFlow.Input;
         }
 

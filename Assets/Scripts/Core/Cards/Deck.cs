@@ -9,6 +9,8 @@ namespace CQ.Core.Cards
     /// </summary>
     public sealed class Deck
     {
+        public const int MaxHandSize = 3;
+
         private readonly Rng _rng;
         private readonly List<string> _drawPile = new List<string>();
         private readonly List<string> _hand = new List<string>();
@@ -30,7 +32,7 @@ namespace CQ.Core.Cards
         /// <summary>抽 n 张到手牌。抽牌堆空时先洗回弃牌；仍不足则停。</summary>
         public void Draw(int n)
         {
-            for (int k = 0; k < n; k++)
+            for (int k = 0; k < n && _hand.Count < MaxHandSize; k++)
             {
                 if (_drawPile.Count == 0)
                 {
@@ -48,11 +50,22 @@ namespace CQ.Core.Cards
         /// <summary>打出索引 handIndex 的牌。返回卡 id；索引非法返回 null。</summary>
         public string Play(int handIndex)
         {
+            string id = Remove(handIndex);
+            if (id != null) _discard.Add(id);
+            return id;
+        }
+
+        public string Remove(int handIndex)
+        {
             if (handIndex < 0 || handIndex >= _hand.Count) return null;
             string id = _hand[handIndex];
             _hand.RemoveAt(handIndex);
-            _discard.Add(id);
             return id;
+        }
+
+        public void InsertIntoDrawPile(string cardId)
+        {
+            _drawPile.Insert(_rng.NextInt(_drawPile.Count + 1), cardId);
         }
 
         private void Shuffle(IList<string> list)

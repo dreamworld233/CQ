@@ -220,9 +220,9 @@ public class IntentFlowTests
         var eng = Make(1, new[] { Sword() }, new[] { Bag() },
             Card("weaken", "weaken", percent: 25), Card("shield", "shield", amount: 20));
         eng.StartBattle();
-        BattleTestDriver.CompleteRound(eng); // 第 1 回合结束，已抽 2 张（weaken + shield）
+        BattleTestDriver.CompleteRound(eng);
 
-        Assert.AreEqual(2, eng.Hand.Count, "两回合各抽 1，攒成 2 张手牌");
+        Assert.AreEqual(2, eng.Hand.Count, "开局两张保留至下一回合，牌堆已空");
 
         string enemyId = eng.Enemies[0].Id;
         bool playedWeak = false, playedShield = false;
