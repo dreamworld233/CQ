@@ -19,13 +19,21 @@ namespace CQ.Core.Config
     }
 
     [Serializable]
+    public class CardInjectionSpec
+    {
+        public string cardId;
+        public int count;
+    }
+
+    [Serializable]
     public class SkillSpec
     {
         public string id;
         public string name;
         public string type;       // basic | ult
         public DamageSpec damage; // 伤害招式
-        public HealSpec heal;     // 治疗招式
+        public HealSpec heal;     // 仅用于拒绝旧直接治疗配置，不再执行
+        public List<CardInjectionSpec> injectCards; // 终结技注入剩余抽牌堆
     }
 
     [Serializable]

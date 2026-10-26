@@ -54,6 +54,7 @@ namespace CQ.Core.Battle
         public ActionResult CurrentAction { get; private set; }
         public bool IsActionOccupied => CurrentAction != null;
         public bool CanPlayCards => InputOpen;
+        public bool SkippedRoundDraw { get; private set; }
         public int PendingUltimateCount => _pending.Count;
 
         private sealed class UltimateRequest
@@ -94,6 +95,8 @@ namespace CQ.Core.Battle
             var cardList = cards.Where(c => c != null).ToList();
             _cards = new Dictionary<string, CardConfig>();
             foreach (var c in cardList) _cards[c.id] = c;
+            string referenceError = ConfigValidator.ValidateCardReferences(_chars.Values, _cards);
+            if (referenceError != null) throw new ArgumentException(referenceError, nameof(cards));
 
             var all = new List<Unit>();
             all.AddRange(players);
@@ -232,7 +235,35 @@ namespace CQ.Core.Battle
             _cards.TryGetValue(Hand[index], out var card) ? card : null;
 
         public bool CanPlayCard(int index, string targetUnitId) => InputOpen &&
+            !CardEffectResolver.IsGroupEffect(HandCard(index)?.effect) &&
             CardEffectResolver.IsValidUnitTarget(HandCard(index)?.effect, Ctx.GetUnit(targetUnitId));
+
+        public bool CanPlayGroupCard(int index) => InputOpen &&
+            CardEffectResolver.IsGroupEffect(HandCard(index)?.effect) &&
+            Ctx.Units.Any(unit => CardEffectResolver.IsValidUnitTarget(HandCard(index).effect, unit));
+
+        public bool PlayGroupCard(int index)
+        {
+            if (!CanPlayGroupCard(index)) return false;
+            string cardId = Deck.Play(index);
+            Ctx.BeginAction(BattleEventKind.Card, null, cardId, false);
+            CardEffectResolver.ResolveGroup(_cards[cardId].effect, Ctx, CardSourceId);
+            Record(Ctx.CompleteAction(targetTeam: Team.Enemy));
+            CheckWinner();
+            return true;
+        }
+
+        public bool CanPlayRemovalCard(int index) => InputOpen && HandCard(index)?.effect?.type == "remove";
+
+        public bool PlayRemovalCard(int index)
+        {
+            if (!CanPlayRemovalCard(index)) return false;
+            string cardId = Deck.Remove(index);
+            Ctx.BeginAction(BattleEventKind.Card, null, cardId, false);
+            Record(Ctx.CompleteAction(removedCardId: cardId));
+            CheckWinner();
+            return true;
+        }
 
         public bool CanPlaySlotCard(int index, Team team, string slotId) => InputOpen &&
             (team == Team.Player || team == Team.Enemy) &&
@@ -253,7 +284,7 @@ namespace CQ.Core.Battle
             if (!CanRequestUltimate(charId)) return false;
             var unit = Ctx.GetUnit(charId);
             var skill = UltimateOf(charId);
-            if (!SkillResolver.IsValidTarget(skill, Ctx, unit))
+            if (!SkillResolver.IsValidTarget(skill, Ctx, unit, Deck))
                 return false;
             int reserved = unit.MaxUlt;
             unit.GainUlt(-reserved);
@@ -283,7 +314,7 @@ namespace CQ.Core.Battle
             for (int i = _pending.Count - 1; i >= 0; i--)
             {
                 var request = _pending[i];
-                if (!IsFinished && SkillResolver.IsValidTarget(request.Skill, Ctx, request.Caster)) continue;
+                if (!IsFinished && SkillResolver.IsValidTarget(request.Skill, Ctx, request.Caster, Deck)) continue;
                 Refund(request);
                 _pending.RemoveAt(i);
             }
@@ -316,7 +347,7 @@ namespace CQ.Core.Battle
             {
                 var request = _pending[0];
                 _pending.RemoveAt(0);
-                var result = SkillResolver.ResolveReserved(request.Skill, Ctx, request.Caster);
+                var result = SkillResolver.ResolveReserved(request.Skill, Ctx, request.Caster, Deck);
                 if (result == null) { Refund(request); continue; }
                 request.Reserved = 0;
                 _executing = request;
@@ -341,6 +372,7 @@ namespace CQ.Core.Battle
             {
                 _turns.CompleteRound();
                 StatusResolver.RoundEndTick(Ctx);
+                SkippedRoundDraw = Hand.Count >= CQ.Core.Cards.Deck.MaxHandSize;
                 Deck.Draw(1);
                 Flow = BattleFlow.Input;
             }
@@ -372,6 +404,18 @@ namespace CQ.Core.Battle
         private void Record(ActionResult result)
         {
             bool any = false;
+            foreach (var group in result.InjectedCardIds.GroupBy(id => id))
+            {
+                any = true;
+                _events.Add(new BattleEvent { Kind = result.Kind, ActorId = result.ActorId, ActionId = result.ActionId,
+                    InjectedCardId = group.Key, InjectedCardCount = group.Count() });
+            }
+            if (result.RemovedCardId != null)
+            {
+                any = true;
+                _events.Add(new BattleEvent { Kind = result.Kind, ActionId = result.ActionId,
+                    RemovedCardId = result.RemovedCardId });
+            }
             foreach (var change in result.UnitChanges)
             {
                 if (change.HpDelta == 0) continue;

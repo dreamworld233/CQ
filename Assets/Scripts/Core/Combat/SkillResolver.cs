@@ -1,5 +1,7 @@
+using System.Collections.Generic;
 using System.Linq;
 using CQ.Core.Battle;
+using CQ.Core.Cards;
 using CQ.Core.Config;
 
 namespace CQ.Core.Combat
@@ -10,55 +12,47 @@ namespace CQ.Core.Combat
             skill != null && caster != null && !caster.IsDead &&
             (skill.type == "basic" || (skill.type == "ult" && caster.MaxUlt > 0 && caster.Ult >= caster.MaxUlt));
 
-        public static bool IsValidTarget(SkillSpec skill, CombatContext ctx, Unit caster)
+        public static bool IsValidTarget(SkillSpec skill, CombatContext ctx, Unit caster, Deck deck = null)
         {
             if (skill == null || ctx == null || caster == null || caster.IsDead ||
                 !ReferenceEquals(ctx.GetUnit(caster.Id), caster)) return false;
-            if ((skill.damage == null) == (skill.heal == null)) return false;
-            if (skill.damage != null)
-                return (skill.damage.target == "single" || skill.damage.target == "all") &&
-                    ctx.Units.Any(u => u.Team != caster.Team && !u.IsDead);
-            return skill.heal.target == "single" || skill.heal.target == "self" || skill.heal.target == "all";
+            if (skill.type == "ult")
+                return deck != null && ConfigValidator.ValidateInjection(skill) == null;
+            return skill.type == "basic" && skill.heal == null && skill.damage != null &&
+                (skill.injectCards == null || skill.injectCards.Count == 0) &&
+                (skill.damage.target == "single" || skill.damage.target == "all") &&
+                ctx.Units.Any(u => u.Team != caster.Team && !u.IsDead);
         }
 
-        public static ActionResult Resolve(SkillSpec skill, CombatContext ctx, Unit caster) =>
-            ResolveEffect(skill, ctx, caster, false);
+        public static ActionResult Resolve(SkillSpec skill, CombatContext ctx, Unit caster, Deck deck = null) =>
+            ResolveEffect(skill, ctx, caster, deck, false);
 
-        internal static ActionResult ResolveReserved(SkillSpec skill, CombatContext ctx, Unit caster) =>
-            ResolveEffect(skill, ctx, caster, true);
+        internal static ActionResult ResolveReserved(SkillSpec skill, CombatContext ctx, Unit caster, Deck deck) =>
+            ResolveEffect(skill, ctx, caster, deck, true);
 
-        private static ActionResult ResolveEffect(SkillSpec skill, CombatContext ctx, Unit caster, bool reserved)
+        private static ActionResult ResolveEffect(SkillSpec skill, CombatContext ctx, Unit caster, Deck deck, bool reserved)
         {
-            if (!IsValidTarget(skill, ctx, caster) || (!reserved && !CanUse(skill, caster))) return null;
+            if (!IsValidTarget(skill, ctx, caster, deck) || (!reserved && !CanUse(skill, caster))) return null;
+            if (skill.type == "ult")
+            {
+                ctx.BeginAction(BattleEventKind.Skill, caster, skill.id, false);
+                if (!reserved) caster.GainUlt(-caster.MaxUlt);
+                var injected = new List<string>();
+                foreach (var entry in skill.injectCards)
+                    for (int i = 0; i < entry.count; i++)
+                    {
+                        deck.InsertIntoDrawPile(entry.cardId);
+                        injected.Add(entry.cardId);
+                    }
+                return ctx.CompleteAction(injectedCardIds: injected);
+            }
+
             var enemies = ctx.Units.Where(u => u.Team != caster.Team && !u.IsDead).ToList();
-            Unit damageTarget = skill.damage?.target == "single" ? TargetSelector.PickTarget(ctx, enemies) : null;
-            // Evaluate healing at execution, in registration order; never consume combat Rng.
-            Unit healTarget = null;
-            if (skill.heal?.target == "single")
-                foreach (var ally in ctx.Units)
-                    if (ally.Team == caster.Team && !ally.IsDead && ally.MaxHp > 0 &&
-                        (healTarget == null || (long)ally.Hp * healTarget.MaxHp < (long)healTarget.Hp * ally.MaxHp))
-                        healTarget = ally;
-            ctx.BeginAction(BattleEventKind.Skill, caster, skill.id, skill.type == "basic");
-            if (skill.type == "ult" && !reserved) caster.GainUlt(-caster.MaxUlt);
-            if (skill.damage != null)
-            {
-                if (skill.damage.target == "all")
-                    foreach (var enemy in enemies) Hit(skill, ctx, caster, enemy);
-                else Hit(skill, ctx, caster, damageTarget);
-            }
-            if (skill.heal != null)
-            {
-                switch (skill.heal.target)
-                {
-                    case "self": caster.Heal(skill.heal.amount); break;
-                    case "all":
-                        foreach (var ally in ctx.Units)
-                            if (ally.Team == caster.Team && !ally.IsDead) ally.Heal(skill.heal.amount);
-                        break;
-                    case "single": healTarget?.Heal(skill.heal.amount); break;
-                }
-            }
+            Unit target = skill.damage.target == "single" ? TargetSelector.PickTarget(ctx, enemies) : null;
+            ctx.BeginAction(BattleEventKind.Skill, caster, skill.id, true);
+            if (skill.damage.target == "all")
+                foreach (var enemy in enemies) Hit(skill, ctx, caster, enemy);
+            else Hit(skill, ctx, caster, target);
             return ctx.CompleteAction();
         }
 

@@ -58,14 +58,13 @@ namespace CQ.Runtime
         public static Sprite RingSprite() => Load("按钮选中框");
 
         /// <summary>
-        /// 技能图标占位：伤害类 → 攻击图标，治疗/增益类 → 增益图标。
-        /// 真图标（9 个）到位后只改这里，不动 UI 结构。
+        /// 技能图标占位：普攻 → 攻击图标，注牌终结技 → 增益图标。
         /// </summary>
         public static Sprite SkillIcon(SkillSpec skill)
         {
             if (skill == null) return null;
             if (skill.damage != null) return Load("攻击");
-            if (skill.heal != null) return Load("增益");
+            if (skill.injectCards != null && skill.injectCards.Count > 0) return Load("增益");
             return null;
         }
 

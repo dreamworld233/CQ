@@ -41,7 +41,7 @@ public class BattleEngineTests
             new SkillSpec { id = id + "_basic", name = "普攻", type = "basic",
                 damage = new DamageSpec { kind = "physical", target = "single", amount = atk } },
             new SkillSpec { id = id + "_ult", name = "终结技", type = "ult",
-                damage = new DamageSpec { kind = "physical", target = "all", amount = atk * 3 } }
+                injectCards = new List<CardInjectionSpec> { new CardInjectionSpec { cardId = "test_skill", count = 1 } } }
         }
     };
 
@@ -80,6 +80,12 @@ public class BattleEngineTests
         count = count
     };
 
+    private static CardConfig GeneratedCard() => new CardConfig
+    {
+        id = "test_skill", name = "技能牌", count = 0,
+        effect = new CardEffectSpec { type = "damage", target = "single", amount = 40 }
+    };
+
     private static BattleEngine Make(long seed, IEnumerable<CharacterConfig> chars, IEnumerable<EnemyConfig> enemies, params CardConfig[] cards)
     {
         var characterList = chars.ToList();
@@ -87,7 +93,9 @@ public class BattleEngineTests
         var enemyList = enemies.ToList();
         var ids = enemyList.Select(e => e.id).ToList();
         var catalog = enemyList.ToDictionary(e => e.id);
-        return BattleEngine.Create(seed, characterList, ids, catalog, cards,
+        var cardCatalog = cards.ToList();
+        if (!cardCatalog.Any(c => c.id == "test_skill")) cardCatalog.Add(GeneratedCard());
+        return BattleEngine.Create(seed, characterList, ids, catalog, cardCatalog,
             SlotIds.Take(ids.Count).ToArray(), TestFormation());
     }
 
@@ -135,11 +143,12 @@ public class BattleEngineTests
         Assert.IsFalse(BattleTestDriver.RequestAndPlay(eng, "sword"));
         eng.Players[0].GainUlt(3);
         Assert.IsTrue(BattleTestDriver.RequestAndPlay(eng, "sword"));
-        Assert.AreEqual(564, eng.Enemies[0].Hp, "终结技经推进与确认完成结算");
+        Assert.AreEqual(600, eng.Enemies[0].Hp, "终结技只注牌，不直接伤害");
+        Assert.AreEqual(1, eng.Deck.DrawPileCount);
         Assert.AreEqual(BattleFlow.Input, eng.Flow);
         Assert.AreEqual(0, eng.Players[0].Ult);
         BattleTestDriver.CompleteRound(eng);
-        Assert.AreEqual(552, eng.Enemies[0].Hp, "正常普攻仍执行");
+        Assert.AreEqual(588, eng.Enemies[0].Hp, "正常普攻仍执行");
         Assert.AreEqual(1, eng.Players[0].Ult);
         Assert.AreEqual(3, eng.ActionResults.Count);
         var sequence = eng.ActionResults.Last().Sequence;
@@ -168,16 +177,20 @@ public class BattleEngineTests
     }
 
     [Test]
-    public void Lethal_Ultimate_Finishes_Immediately_Without_Starting_Normal_Round()
+    public void Generated_Attack_Finishes_Immediately_Without_Starting_Normal_Round()
     {
         var eng = Make(1, new[] { C("sword", 100, 10, 12) }, new[] { E("grunt", 20, 1, 10) });
         eng.StartBattle(); eng.Players[0].GainUlt(3);
         Assert.IsTrue(BattleTestDriver.RequestAndPlay(eng, "sword"));
+        Assert.IsFalse(eng.IsFinished);
+        Assert.IsEmpty(eng.Hand);
+        eng.Deck.Draw(1);
+        Assert.IsTrue(eng.PlayCard(0, eng.Enemies[0].Id));
         Assert.IsTrue(eng.IsFinished); Assert.AreEqual(Team.Player, eng.Winner);
         Assert.AreEqual(BattleFlow.Finished, eng.Flow);
         Assert.IsFalse(BattleTestDriver.RequestAndPlay(eng, "sword"));
         BattleTestDriver.CompleteRound(eng);
-        Assert.AreEqual(1, eng.ActionResults.Count); Assert.AreEqual(0, eng.Round);
+        Assert.AreEqual(2, eng.ActionResults.Count); Assert.AreEqual(0, eng.Round);
     }
 
     [Test]
@@ -203,9 +216,11 @@ public class BattleEngineTests
         BattleTestDriver.CompleteRound(eng);
         Assert.AreEqual(3, eng.Hand.Count);
         Assert.AreEqual(2, eng.Deck.DrawPileCount);
+        Assert.IsFalse(eng.SkippedRoundDraw);
         BattleTestDriver.CompleteRound(eng);
         Assert.AreEqual(3, eng.Hand.Count);
         Assert.AreEqual(2, eng.Deck.DrawPileCount);
+        Assert.IsTrue(eng.SkippedRoundDraw);
         Assert.IsTrue(eng.PlayCard(0, eng.Enemies[0].Id));
         Assert.AreEqual(2, eng.Hand.Count);
         Assert.AreEqual(2, eng.Deck.DrawPileCount);
@@ -595,36 +610,43 @@ public class BattleEngineTests
         Assert.IsNull(typeof(BattleEngine).GetMethod("CancelUltimate"));
         Assert.IsNull(typeof(BattleEngine).GetMethod("CanCancelUltimate"));
         Assert.AreEqual(1, typeof(BattleEngine).GetMethod("RequestUltimate").GetParameters().Length);
-        Assert.AreEqual(3, typeof(SkillResolver).GetMethod("Resolve").GetParameters().Length);
+        Assert.AreEqual(typeof(Deck), typeof(SkillResolver).GetMethod("Resolve").GetParameters().Last().ParameterType);
     }
 
     [TestCase(false)]
     [TestCase(true)]
-    public void Single_Heal_Selects_Current_Lowest_At_Execution_And_Replaces_Dead_Ally(bool dies)
+    public void Heal_Injection_Does_Not_Select_Or_Heal_An_Ally(bool dies)
     {
         var config = C("a", 100, 10, 1);
-        config.skills[1].damage = null;
-        config.skills[1].heal = new HealSpec { target = "single", amount = 10 };
-        var eng = Make(1, new[] { config, C("b", 100, 2, 1), C("c", 100, 1, 1) }, new[] { E("foe", 1000, 1, 1) });
+        var card = GeneratedCard(); card.effect = new CardEffectSpec { type = "heal", target = "single", amount = 30 };
+        var eng = Make(1, new[] { config, C("b", 100, 2, 1), C("c", 100, 1, 1) }, new[] { E("foe", 1000, 1, 1) }, card);
         eng.StartBattle(); eng.Players[0].GainUlt(3);
         eng.Players[1].Hp = 10;
         Assert.IsTrue(eng.RequestUltimate("a"));
         eng.Players[1].Hp = dies ? 0 : 90; eng.Players[2].Hp = 20;
         var result = eng.Advance();
-        Assert.IsNotNull(result); Assert.AreEqual(30, eng.Players[2].Hp);
+        Assert.IsNotNull(result); Assert.AreEqual(20, eng.Players[2].Hp);
         Assert.AreEqual(dies ? 0 : 90, eng.Players[1].Hp); Assert.AreEqual(0, eng.Players[0].Ult);
+        Assert.IsTrue(eng.Confirm(eng.BattleId, result.Sequence));
+        eng.Deck.Draw(1);
+        Assert.IsTrue(eng.PlayCard(0, "a"), "可手选自身，而不是强制最低血量");
+        Assert.AreEqual(20, eng.Players[2].Hp);
     }
 
     [Test]
-    public void Ordinary_Single_Ultimate_Selects_Taunt_At_Execution_Not_Registration()
+    public void Generated_Single_Attack_Is_Hand_Targeted_Regardless_Of_Taunt()
     {
-        var config = C("a", 100, 10, 1); config.skills[1].damage.target = "single";
+        var config = C("a", 100, 10, 1);
         var eng = Make(1, new[] { config }, new[] { E("foe", 1000, 1, 1), E("other", 1000, 1, 1) });
         eng.StartBattle(); eng.Players[0].GainUlt(3);
         Assert.IsTrue(eng.RequestUltimate("a"));
         eng.Ctx.FormationOf(Team.Enemy).GetSlot("front2").AddModifier(100, 1);
         var result = eng.Advance();
-        Assert.AreEqual("other_1", result.Hits.Single().TargetUnitId);
+        Assert.IsEmpty(result.Hits);
+        Assert.IsTrue(eng.Confirm(eng.BattleId, result.Sequence));
+        eng.Deck.Draw(1);
+        Assert.IsTrue(eng.PlayCard(0, "foe_0"));
+        Assert.AreEqual("foe_0", eng.ActionResults.Last().Hits.Single().TargetUnitId);
     }
 
     [Test]
@@ -643,28 +665,17 @@ public class BattleEngineTests
 
     [TestCase(true)]
     [TestCase(false)]
-    public void Winner_Clears_Waiting_And_Normal_But_Preserves_Current_For_Playback(bool playerWins)
+    public void Winner_Clears_Normal_But_Preserves_Current_For_Playback(bool playerWins)
     {
         var eng = Make(1, new[] { C("a", 100, 10, 1000), C("b", 100, 2, 1) },
             new[] { E("foe", playerWins ? 10 : 10000, playerWins ? 1 : 20, playerWins ? 1 : 1000) });
         eng.StartBattle(); Assert.IsTrue(eng.BeginActions());
-        ActionResult current;
-        if (playerWins)
-        {
-            foreach (var actor in eng.Players) actor.GainUlt(3);
-            Assert.IsTrue(eng.RequestUltimate("a")); Assert.IsTrue(eng.RequestUltimate("b"));
-            current = eng.Advance();
-            Assert.IsTrue(eng.HasUltimateRequest("a"));
-        }
-        else
-        {
-            eng.Ctx.GetUnit("a").Hp = 0;
-            current = eng.Advance();
-        }
+        if (!playerWins) eng.Ctx.GetUnit("a").Hp = 0;
+        ActionResult current = eng.Advance();
         Assert.IsTrue(eng.IsFinished); Assert.AreSame(current, eng.CurrentAction);
         Assert.AreEqual(playerWins ? Team.Player : Team.Enemy, eng.Winner);
         Assert.AreEqual(0, eng.PendingUltimateCount);
-        if (playerWins) Assert.AreEqual(3, eng.Ctx.GetUnit("b").Ult);
+        if (playerWins) Assert.AreEqual(0, eng.Ctx.GetUnit("b").Ult);
         Assert.IsFalse(eng.RequestUltimate("b")); Assert.IsNull(eng.Advance());
         Assert.IsFalse(eng.Confirm(System.Guid.NewGuid(), current.Sequence));
         Assert.IsTrue(eng.Confirm(eng.BattleId, current.Sequence));
@@ -674,9 +685,9 @@ public class BattleEngineTests
     }
 
     [Test]
-    public void Dead_Normal_Queue_Entry_Is_Skipped_After_Inserted_Ultimate()
+    public void Dead_Normal_Queue_Entry_Is_Skipped_After_Basic_With_Inserted_Ultimate()
     {
-        var config = C("a", 100, 10, 10); config.skills[1].damage.target = "single";
+        var config = C("a", 100, 10, 20);
         var eng = Make(1, new[] { config }, new[] { E("foe", 20, 5, 1), E("other", 1000, 1, 1) });
         eng.StartBattle(); Assert.IsTrue(eng.BeginActions());
         eng.Players[0].GainUlt(3); Assert.IsTrue(eng.RequestUltimate("a"));
@@ -809,7 +820,7 @@ public class BattleEngineTests
         back.defaultSlot = "back3";
         var enemy = E("grunt", 100, 1, 1);
         var eng = BattleEngine.Create(7, new[] { front, back }, new[] { "grunt", "grunt" },
-            new Dictionary<string, EnemyConfig> { { "grunt", enemy } }, new CardConfig[0],
+            new Dictionary<string, EnemyConfig> { { "grunt", enemy } }, new[] { GeneratedCard() },
             new[] { "back2", "front1" }, TestFormation());
 
         Assert.AreEqual("front2", eng.Players[0].SlotId);
@@ -833,14 +844,14 @@ public class BattleEngineTests
         var enemy = E("grunt", 100, 1, 1);
         var wave = new WaveConfig { enemies = new[] { "grunt" }, slots = new[] { "back3" } };
         var eng = BattleEngine.Create(7, new[] { character }, wave,
-            new Dictionary<string, EnemyConfig> { { "grunt", enemy } }, new CardConfig[0], TestFormation());
+            new Dictionary<string, EnemyConfig> { { "grunt", enemy } }, new[] { GeneratedCard() }, TestFormation());
 
         Assert.AreEqual("back1", eng.Players[0].SlotId);
         Assert.AreEqual("back3", eng.Enemies[0].SlotId);
     }
 
     [Test]
-    public void HealSingle_Automatically_Heals_Lowest_Ally()
+    public void HealSingle_Is_Injected_Then_Heals_Chosen_Ally()
     {
         var healer = new CharacterConfig
         {
@@ -849,7 +860,7 @@ public class BattleEngineTests
             skills = new List<SkillSpec>
             {
                 new SkillSpec { id = "healer_ult", name = "治疗", type = "ult",
-                    heal = new HealSpec { target = "single", amount = 20 } }
+                    injectCards = new List<CardInjectionSpec> { new CardInjectionSpec { cardId = "test_skill", count = 1 } } }
             }
         };
         var buddy = new CharacterConfig
@@ -863,7 +874,8 @@ public class BattleEngineTests
             }
         };
 
-        var eng = Make(1, new[] { healer, buddy }, new[] { E("foe", 999, 0, 0) });
+        var card = GeneratedCard(); card.effect = new CardEffectSpec { type = "heal", target = "single", amount = 30 };
+        var eng = Make(1, new[] { healer, buddy }, new[] { E("foe", 999, 0, 0) }, card);
         eng.StartBattle();
         eng.Ctx.GetUnit("buddy").TakeDamage(50);
 
@@ -872,8 +884,132 @@ public class BattleEngineTests
 
         BattleTestDriver.CompleteRound(eng);
 
-        Assert.AreEqual(50, eng.Ctx.GetUnit("buddy").Hp, "治疗回 30→50");
+        Assert.AreEqual(30, eng.Ctx.GetUnit("buddy").Hp, "注牌本身不治疗");
+        Assert.IsTrue(eng.PlayCard(0, "buddy"));
+        Assert.AreEqual(60, eng.Ctx.GetUnit("buddy").Hp, "治疗牌回 30→60");
     }
+    private static CardConfig AttackCard(string target, int damage) => new CardConfig
+    {
+        id = "damage", name = "damage", count = 1,
+        effect = new CardEffectSpec { type = "damage", target = target, amount = damage }
+    };
+
+    [Test]
+    public void Single_Attack_Card_Uses_Chosen_Target_Shield_And_Hit_Charging_Without_Attack_Charging()
+    {
+        var eng = Make(7, new[] { C("a", 100, 10, 1) },
+            new[] { E("foe", 100, 1, 1), E("other", 100, 1, 1) }, AttackCard("single", 20));
+        eng.StartBattle();
+        var target = eng.Enemies[1];
+        target.UltChargeTrigger = "hit"; target.UltChargeAmount = 1; target.MaxUlt = 3;
+        eng.Ctx.FormationOf(Team.Enemy).GetSlot("front1").AddModifier(100, 1);
+        eng.Ctx.AddStatus(target.Id, new StatusEffect { Type = StatusType.Vulnerable, Percent = 50, Duration = 1, Turn = "round" });
+        eng.Ctx.AddStatus(target.Id, new StatusEffect { Type = StatusType.Shield, Amount = 20, Turn = "once" });
+        RefusesWithoutMutation(eng, () =>
+        {
+            Assert.IsFalse(eng.PlayGroupCard(0));
+            Assert.IsFalse(eng.PlayCard(0, "a"));
+        });
+        Assert.IsTrue(eng.PlayCard(0, target.Id));
+        Assert.AreEqual(100, eng.Enemies[0].Hp);
+        Assert.AreEqual(90, target.Hp);
+        Assert.AreEqual(1, target.Ult);
+        Assert.AreEqual(0, eng.Players[0].Ult);
+        var result = eng.ActionResults.Single();
+        Assert.IsNull(result.ActorId);
+        Assert.AreEqual(BattleEngine.CardSourceId, result.Hits.Single().SourceUnitId);
+        Assert.AreEqual(20, result.Hits.Single().ShieldAbsorbed);
+        Assert.IsNull(eng.CurrentAction);
+        Assert.AreEqual(1, eng.Deck.DiscardPileCount);
+    }
+
+    [TestCase("damage")]
+    [TestCase("weaken")]
+    [TestCase("vulnerable")]
+    public void Group_Cards_Require_Idle_Input_And_Reject_Unit_And_Slot_Entrypoints(string type)
+    {
+        var card = Card(type);
+        card.effect.target = "all";
+        var eng = Make(7, new[] { C("a", 100, 10, 1) },
+            new[] { E("foe", 1000, 1, 1), E("other", 1000, 1, 1) }, card);
+        RefusesWithoutMutation(eng, () => Assert.IsFalse(eng.PlayGroupCard(0)));
+        eng.StartBattle();
+        RefusesWithoutMutation(eng, () =>
+        {
+            foreach (int index in new[] { -1, eng.Hand.Count, int.MaxValue })
+            {
+                Assert.IsFalse(eng.CanPlayGroupCard(index));
+                Assert.IsFalse(eng.PlayGroupCard(index));
+            }
+            Assert.IsFalse(eng.PlayCard(0, eng.Enemies[0].Id));
+            Assert.IsFalse(eng.PlaySlotCard(0, Team.Enemy, "front1"));
+        });
+        Assert.IsTrue(eng.BeginActions());
+        RefusesWithoutMutation(eng, () => Assert.IsFalse(eng.PlayGroupCard(0)));
+        var current = eng.Advance();
+        RefusesWithoutMutation(eng, () => Assert.IsFalse(eng.PlayGroupCard(0)));
+        Assert.IsTrue(eng.Confirm(eng.BattleId, current.Sequence));
+        BattleTestDriver.Drain(eng);
+        Assert.IsTrue(eng.CanPlayGroupCard(0));
+        Assert.IsTrue(eng.PlayGroupCard(0));
+        Assert.IsEmpty(eng.Hand);
+        Assert.AreEqual(1, eng.Deck.DiscardPileCount);
+        var result = eng.ActionResults.Last();
+        Assert.AreEqual(Team.Enemy, result.TargetTeam);
+        Assert.IsNull(result.TargetUnitId);
+        Assert.IsNull(result.TargetSlotId);
+        Assert.IsNull(eng.CurrentAction);
+        foreach (var enemy in eng.Enemies)
+        {
+            if (type == "damage")
+            {
+                Assert.GreaterOrEqual(enemy.Hp, 959);
+                Assert.LessOrEqual(enemy.Hp, 960);
+            }
+            else Assert.IsTrue(eng.Ctx.HasStatus(enemy.Id, type == "weaken" ? StatusType.Weaken : StatusType.Vulnerable));
+        }
+        if (type == "damage") Assert.AreEqual(1919, eng.Enemies.Sum(enemy => enemy.Hp));
+        Assert.IsEmpty(eng.Ctx.GetStatuses("a"));
+    }
+
+    [TestCase("single")]
+    [TestCase("all")]
+    public void Lethal_Card_Finishes_During_Input_Without_Starting_Automatic_Actions(string target)
+    {
+        var eng = Make(7, new[] { C("a", 100, 10, 1) }, new[] { E("foe", 10, 1, 1) }, AttackCard(target, 20));
+        eng.StartBattle();
+        Assert.IsTrue(target == "all" ? eng.PlayGroupCard(0) : eng.PlayCard(0, eng.Enemies[0].Id));
+        Assert.IsTrue(eng.IsFinished);
+        Assert.AreEqual(Team.Player, eng.Winner);
+        Assert.AreEqual(BattleFlow.Finished, eng.Flow);
+        Assert.AreEqual(0, eng.Round);
+        Assert.AreEqual(1, eng.ActionResults.Count);
+        Assert.IsFalse(eng.BeginActions());
+        Assert.IsNull(eng.Advance());
+        RefusesWithoutMutation(eng, () => Assert.IsFalse(eng.PlayGroupCard(0)));
+    }
+
+    [Test]
+    public void Group_Vulnerable_Then_Attack_Combines_Without_Hitting_Dead_Units_Or_Allies()
+    {
+        var vulnerable = Card("vulnerable");
+        vulnerable.effect.target = "all";
+        vulnerable.effect.percent = 50;
+        var eng = Make(7, new[] { C("a", 100, 10, 1) },
+            new[] { E("foe", 100, 1, 1), E("other", 100, 1, 1) }, vulnerable, AttackCard("all", 10));
+        eng.Enemies[1].Hp = 0;
+        eng.StartBattle();
+        Assert.IsTrue(eng.PlayGroupCard(eng.Hand.ToList().IndexOf("vulnerable")));
+        Assert.IsTrue(eng.PlayGroupCard(eng.Hand.ToList().IndexOf("damage")));
+        Assert.AreEqual(85, eng.Enemies[0].Hp);
+        Assert.AreEqual(0, eng.Enemies[1].Hp);
+        Assert.IsEmpty(eng.Ctx.GetStatuses(eng.Enemies[1].Id));
+        Assert.AreEqual(100, eng.Players[0].Hp);
+        Assert.AreEqual(1, eng.ActionResults.Last().Hits.Count);
+        BattleTestDriver.CompleteRound(eng);
+        Assert.IsFalse(eng.Ctx.HasStatus(eng.Enemies[0].Id, StatusType.Vulnerable));
+    }
+
     private static CardConfig Card(string type) => new CardConfig
     {
         id = type, name = type, count = 1,

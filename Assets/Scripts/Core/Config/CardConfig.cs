@@ -5,9 +5,10 @@ namespace CQ.Core.Config
     [Serializable]
     public class CardEffectSpec
     {
-        public string type;    // interrupt | weaken | slow | haste | shield | attackUp
-        public int percent;    // weaken / slow / haste / attackUp
-        public int amount;     // shield / tauntUp / tauntDown
+        public string type;
+        public string target;
+        public int percent;
+        public int amount;
         public int duration;
     }
 

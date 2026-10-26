@@ -13,6 +13,7 @@ namespace CQ.Core.Combat
         public int RawDamage;
         public int AfterAttackUp;
         public int AfterWeaken;
+        public int AfterVulnerable;
         public int ShieldAbsorbed;
         public int FinalDamage;
         public bool TargetDead;

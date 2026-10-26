@@ -21,6 +21,9 @@ namespace CQ.Core.Battle
         public string TargetId;
         public CQ.Core.Combat.Team? TargetTeam;
         public string TargetSlotId;
+        public string InjectedCardId;
+        public int InjectedCardCount;
+        public string RemovedCardId;
 
         /// <summary>目标 HP 变化量（负=伤害，正=治疗，0=无血量变化）。</summary>
         public int HpDelta;

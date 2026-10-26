@@ -8,7 +8,8 @@ namespace CQ.Core.Combat
         Shield,
         AttackUp,
         Slow,
-        Interrupt
+        Interrupt,
+        Vulnerable
     }
 
     public static class StatusTypes
@@ -22,6 +23,7 @@ namespace CQ.Core.Combat
                 case "attackUp": return StatusType.AttackUp;
                 case "slow": return StatusType.Slow;
                 case "interrupt": return StatusType.Interrupt;
+                case "vulnerable": return StatusType.Vulnerable;
                 default: throw new ArgumentException("未知状态 id: " + id);
             }
         }

@@ -90,10 +90,15 @@ namespace CQ.Core.Battle
         public IReadOnlyList<AttackHit> Hits { get; }
         public IReadOnlyList<string> HitTargetIds { get; }
         public IReadOnlyList<UltCharge> Charges { get; }
+        public IReadOnlyList<string> InjectedCardIds { get; }
+        public string RemovedCardId { get; }
         internal ActionResult(long sequence, BattleEventKind kind, string actorId, string actionId,
             IEnumerable<UnitChange> changes, IEnumerable<AttackHit> hits, IEnumerable<UltCharge> charges,
-            Team? targetTeam = null, string targetSlotId = null, string targetUnitId = null)
+            Team? targetTeam = null, string targetSlotId = null, string targetUnitId = null,
+            IEnumerable<string> injectedCardIds = null, string removedCardId = null)
         {
+            InjectedCardIds = (injectedCardIds ?? Enumerable.Empty<string>()).ToList().AsReadOnly();
+            RemovedCardId = removedCardId;
             TargetUnitId = targetUnitId;
             TargetTeam = targetTeam; TargetSlotId = targetSlotId;
             Sequence = sequence; Kind = kind; ActorId = actorId; ActionId = actionId;

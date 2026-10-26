@@ -105,7 +105,7 @@ namespace CQ.Runtime
                     engine.CurrentAction.ActionId == engine.UltimateOf(binding.ActorId)?.id;
                 bool ready = !_cardTargeting && engine.CanRequestUltimate(binding.ActorId);
                 binding.Label.text = engine.IsFinished ? "结束" : actor.IsDead ? "死亡" : executing ? "释放中" :
-                    engine.HasUltimateRequest(binding.ActorId) ? "排队" : ready ? "就绪 · 释放" : "未满";
+                    engine.HasUltimateRequest(binding.ActorId) ? "排队" : ready ? "就绪 · 注牌" : "未满";
                 binding.Button.interactable = ready;
                 ((Image)binding.Button.targetGraphic).color = ready ? new Color(0.65f, 0.38f, 0.06f, 1f) : ButtonBg;
                 // Only enabled ready buttons capture input. All other presentation stays click-through.
@@ -351,8 +351,11 @@ namespace CQ.Runtime
             }
             _handContent.sizeDelta = new Vector2(Mathf.Max(0f, count * 212f - 8f), 0f);
             _cancelCard.interactable = selectedIndex >= 0;
-            _handHint.text = "手牌 " + count + " · " + (selectedIndex >= 0 ? targetHint :
-                engine != null && engine.CanPlayCards ? "点卡选目标；横向拖动查看全部" : "仅策略窗口可出牌");
+            _handHint.text = "手牌 " + count + "/" + CQ.Core.Cards.Deck.MaxHandSize +
+                (engine != null ? " · 抽牌堆 " + engine.Deck.DrawPileCount + " / 弃牌堆 " + engine.Deck.DiscardPileCount : "") + " · " +
+                (selectedIndex >= 0 ? targetHint : engine != null && engine.CanPlayCards
+                    ? (engine.SkippedRoundDraw ? "本回合因满手未抽牌；" : "") + "单体选目标，群体点按生效"
+                    : "仅策略窗口可出牌");
         }
 
         private static string CardDescription(CardEffectSpec effect)
@@ -360,8 +363,12 @@ namespace CQ.Runtime
             if (effect == null) return "未知效果";
             switch (effect.type)
             {
+                case "heal": return "手选存活我方恢复 " + effect.amount + " HP（不复活）";
+                case "remove": return "无效果；点按移出本场，不回洗";
+                case "damage": return (effect.target == "all" ? "全体敌人" : "手选敌人") + "受到 " + effect.amount + " 点伤害";
+                case "vulnerable": return "全体敌人受到伤害增加 " + effect.percent + "%（本回合）";
                 case "interrupt": return "打断存活敌人本回合行动";
-                case "weaken": return "存活敌人伤害降低 " + effect.percent + "%（本回合）";
+                case "weaken": return (effect.target == "all" ? "全体敌人" : "存活敌人") + "伤害降低 " + effect.percent + "%（本回合）";
                 case "slow": return "存活敌人减速 " + effect.percent + "%（本回合）";
                 case "haste": return "存活我方加速 " + effect.percent + "%（本回合）";
                 case "shield": return "存活我方获得护盾 " + effect.amount;

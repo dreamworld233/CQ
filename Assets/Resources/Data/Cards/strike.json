@@ -1,0 +1,1 @@
+{ "id": "strike", "name": "单体攻击", "effect": { "type": "damage", "target": "single", "amount": 20 }, "count": 1 }

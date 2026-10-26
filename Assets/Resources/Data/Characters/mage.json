@@ -21,11 +21,10 @@
       "id": "mage_ult",
       "name": "群星坠落",
       "type": "ult",
-      "damage": {
-        "kind": "magic",
-        "target": "all",
-        "amount": 38
-      }
+      "injectCards": [
+        { "cardId": "lightning", "count": 1 },
+        { "cardId": "slag", "count": 1 }
+      ]
     }
   ],
   "ultChargeTrigger": "attack",

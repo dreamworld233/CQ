@@ -25,23 +25,21 @@ public class ConfigLoaderTests
 
         Assert.AreEqual(3, characters.items.Count, "角色应为 3");
         Assert.AreEqual(3, enemies.items.Count, "敌人应为 3");
-        Assert.AreEqual(5, statuses.items.Count, "状态应为 5");
+        Assert.AreEqual(6, statuses.items.Count, "含易伤共6种状态");
         Assert.AreEqual(3, levels.items.Count, "关卡应为 3");
 
-        Assert.AreEqual(8, cards.items.Count, "卡定义应为 8 种");
+        Assert.AreEqual(15, cards.items.Count, "目录包含基础牌、旧卡与四种生成牌");
         CollectionAssert.AreEquivalent(new[]
         {
-            "interrupt", "weaken", "slow", "haste", "shield", "attackUp", "tauntUp", "tauntDown"
-        }, cards.items.Select(c => c.effect.type));
-        Assert.IsTrue(cards.items.All(c => c.count == 1), "每种卡恰好一张");
+            "strike", "sweep", "interrupt", "vulnerable", "weaken"
+        }, cards.items.Where(c => c.count > 0).Select(c => c.id));
+        Assert.AreEqual(5, cards.items.Sum(c => c.count));
+        Assert.IsTrue(cards.items.All(c => c.count == 0 || c.count == 1));
         foreach (var card in cards.items.Where(c => c.effect.type == "tauntUp" || c.effect.type == "tauntDown"))
         {
             Assert.Greater(card.effect.amount, 0, card.id);
             Assert.Greater(card.effect.duration, 0, card.id);
         }
-        int cardCopies = 0;
-        foreach (var c in cards.items) cardCopies += c.count;
-        Assert.AreEqual(8, cardCopies, "卡总张数应为 8");
     }
 
     [Test]
@@ -114,14 +112,16 @@ public class ConfigLoaderTests
             new SkillSpec { id = "basic", name = "Basic", type = "basic",
                 damage = new DamageSpec { kind = "physical", target = "single", amount = 1 } },
             new SkillSpec { id = "ult", name = "Ult", type = "ult",
-                damage = new DamageSpec { kind = "magic", target = "single", amount = 5 } }
+                injectCards = new List<CardInjectionSpec> { new CardInjectionSpec { cardId = "heal", count = 1 } } }
         }
     };
 
-    [TestCase("damage", true)]
-    [TestCase("heal", true)]
-    [TestCase("damageEmptyHeal", true)]
-    [TestCase("healEmptyDamage", true)]
+    [TestCase("inject", true)]
+    [TestCase("injectEmptyEffects", true)]
+    [TestCase("damage", false)]
+    [TestCase("heal", false)]
+    [TestCase("damageEmptyHeal", false)]
+    [TestCase("healEmptyDamage", false)]
     [TestCase("both", false)]
     [TestCase("missing", false)]
     [TestCase("empty", false)]
@@ -131,9 +131,12 @@ public class ConfigLoaderTests
     {
         const string damage = @"""damage"": { ""kind"": ""magic"", ""target"": ""single"", ""amount"": 10 }";
         const string heal = @"""heal"": { ""target"": ""all"", ""amount"": 20 }";
+        const string inject = @", ""injectCards"": [{ ""cardId"": ""heal"", ""count"": 1 }]";
         string effects;
         switch (mode)
         {
+            case "inject": effects = inject; break;
+            case "injectEmptyEffects": effects = inject + @", ""damage"": {}, ""heal"": {}"; break;
             case "damage": effects = "," + damage; break;
             case "heal": effects = "," + heal; break;
             case "damageEmptyHeal": effects = "," + damage + @", ""heal"": {}"; break;
@@ -167,14 +170,8 @@ public class ConfigLoaderTests
                 var character = result.items.Single();
                 Assert.IsNull(character.skills[0].heal);
                 var ult = character.skills[1];
-                if (mode.StartsWith("damage"))
-                {
-                    Assert.IsNotNull(ult.damage); Assert.IsNull(ult.heal);
-                }
-                else
-                {
-                    Assert.IsNull(ult.damage); Assert.IsNotNull(ult.heal);
-                }
+                Assert.IsNull(ult.damage); Assert.IsNull(ult.heal);
+                Assert.AreEqual("heal", ult.injectCards.Single().cardId);
                 Assert.IsNull(ConfigValidator.ValidateCharacter(character));
             }
         }
@@ -216,16 +213,16 @@ public class ConfigLoaderTests
             case "duplicateId": c.skills[1].id = c.skills[0].id; break;
             case "nullSkill": c.skills[1] = null; break;
             case "oldSkill": c.skills[1].type = "skill"; break;
-            case "badDamageTarget": c.skills[1].damage.target = "friend"; break;
-            case "ultSnipe": c.skills[1].damage.target = "snipe"; break;
+            case "badDamageTarget": c.skills[0].damage.target = "friend"; break;
+            case "ultSnipe": c.skills[0].damage.target = "snipe"; break;
             case "basicSnipe": c.skills[0].damage.target = "snipe"; break;
-            case "badKind": c.skills[1].damage.kind = "unknown"; break;
-            case "zeroDamage": c.skills[1].damage.amount = 0; break;
+            case "badKind": c.skills[0].damage.kind = "unknown"; break;
+            case "zeroDamage": c.skills[0].damage.amount = 0; break;
             case "badHealTarget":
                 c.skills[1].damage = null; c.skills[1].heal = new HealSpec { target = "enemy", amount = 1 }; break;
             case "zeroHeal":
                 c.skills[1].damage = null; c.skills[1].heal = new HealSpec { target = "all", amount = 0 }; break;
-            case "noEffect": c.skills[1].damage = null; break;
+            case "noEffect": c.skills[1].injectCards = null; break;
             case "mixedEffect": c.skills[1].heal = new HealSpec { target = "all", amount = 1 }; break;
         }
         Assert.IsNotNull(ConfigValidator.ValidateCharacter(c), problem);
@@ -243,12 +240,12 @@ public class ConfigLoaderTests
     [TestCase("self")]
     [TestCase("single")]
     [TestCase("all")]
-    public void Character_Accepts_Heal_Ultimate_Modes(string mode)
+    public void Character_Rejects_Legacy_Heal_Ultimate_Modes(string mode)
     {
         var c = ValidCharacter();
-        c.skills[1].damage = null;
+        c.skills[1].injectCards = null;
         c.skills[1].heal = new HealSpec { target = mode, amount = 20 };
-        Assert.IsNull(ConfigValidator.ValidateCharacter(c));
+        Assert.IsNotNull(ConfigValidator.ValidateCharacter(c));
     }
 
     [TestCase("front1")]
@@ -326,6 +323,40 @@ public class ConfigLoaderTests
             effect = new CardEffectSpec { type = type, amount = amount, duration = duration }
         };
         Assert.AreEqual(valid, ConfigValidator.ValidateCard(card) == null);
+    }
+
+    [TestCase("damage", "single", 20, 0, true)]
+    [TestCase("damage", "all", 10, 0, true)]
+    [TestCase("damage", null, 20, 0, false)]
+    [TestCase("damage", "enemy", 20, 0, false)]
+    [TestCase("damage", "single", 0, 0, false)]
+    [TestCase("damage", "all", -10, 0, false)]
+    [TestCase("vulnerable", "all", 0, 50, true)]
+    [TestCase("vulnerable", "all", 0, 0, false)]
+    [TestCase("weaken", "all", 0, 25, true)]
+    [TestCase("weaken", "all", 0, 101, false)]
+    [TestCase("interrupt", "all", 0, 0, false)]
+    public void New_Card_Types_Validate_Scope_And_Numbers(string type, string target, int amount, int percent, bool valid)
+    {
+        var card = new CardConfig
+        {
+            id = "test", name = "test", count = 1,
+            effect = new CardEffectSpec { type = type, target = target, amount = amount, percent = percent }
+        };
+        Assert.AreEqual(valid, ConfigValidator.ValidateCard(card) == null);
+    }
+
+    [Test]
+    public void Catalog_Cards_Can_Start_With_Zero_Copies_But_Not_Negative()
+    {
+        var card = new CardConfig
+        {
+            id = "test", name = "test", count = 0,
+            effect = new CardEffectSpec { type = "damage", target = "all", amount = 10 }
+        };
+        Assert.IsNull(ConfigValidator.ValidateCard(card));
+        card.count = -1;
+        Assert.IsNotNull(ConfigValidator.ValidateCard(card));
     }
 
     [Test]

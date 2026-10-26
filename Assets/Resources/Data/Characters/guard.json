@@ -21,10 +21,9 @@
       "id": "guard_ult",
       "name": "治疗",
       "type": "ult",
-      "heal": {
-        "target": "single",
-        "amount": 20
-      }
+      "injectCards": [
+        { "cardId": "heal", "count": 1 }
+      ]
     }
   ],
   "ultChargeTrigger": "hit",

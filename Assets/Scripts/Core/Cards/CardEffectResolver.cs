@@ -12,13 +12,16 @@ namespace CQ.Core.Cards
         public static bool IsSlotEffect(CardEffectSpec effect) =>
             effect != null && (effect.type == "tauntUp" || effect.type == "tauntDown");
 
+        public static bool IsGroupEffect(CardEffectSpec effect) => effect != null && effect.target == "all";
+
         public static bool IsValidUnitTarget(CardEffectSpec effect, Unit target)
         {
             if (effect == null || target == null || target.IsDead) return false;
             switch (effect.type)
             {
+                case "damage": case "vulnerable":
                 case "interrupt": case "weaken": case "slow": return target.Team == Team.Enemy;
-                case "haste": case "shield": case "attackUp": return target.Team == Team.Player;
+                case "heal": case "haste": case "shield": case "attackUp": return target.Team == Team.Player;
                 default: return false;
             }
         }
@@ -29,12 +32,44 @@ namespace CQ.Core.Cards
                 effect.type == "tauntUp" ? effect.amount : -effect.amount, effect.duration);
         }
 
+        public static void ResolveGroup(CardEffectSpec effect, CombatContext ctx, string sourceUnitId)
+        {
+            foreach (var target in ctx.Units)
+                if (IsValidUnitTarget(effect, target))
+                    Resolve(effect, ctx, target.Id, sourceUnitId);
+        }
+
         public static void Resolve(CardEffectSpec effect, CombatContext ctx, string targetUnitId, string sourceUnitId)
         {
             if (effect == null || ctx == null || string.IsNullOrEmpty(targetUnitId)) return;
 
             switch (effect.type)
             {
+                case "heal":
+                    if (IsValidUnitTarget(effect, ctx.GetUnit(targetUnitId)))
+                        ctx.GetUnit(targetUnitId).Heal(effect.amount);
+                    break;
+
+                case "damage":
+                    Damage.ApplyCard(ctx, new DamageRequest
+                    {
+                        Amount = effect.amount,
+                        SourceUnitId = sourceUnitId,
+                        TargetUnitId = targetUnitId
+                    });
+                    break;
+
+                case "vulnerable":
+                    ctx.AddStatus(targetUnitId, new StatusEffect
+                    {
+                        Type = StatusType.Vulnerable,
+                        Percent = effect.percent,
+                        Duration = 1,
+                        Turn = "round",
+                        SourceUnitId = sourceUnitId
+                    });
+                    break;
+
                 case "interrupt":
                     ctx.AddStatus(targetUnitId, new StatusEffect
                     {

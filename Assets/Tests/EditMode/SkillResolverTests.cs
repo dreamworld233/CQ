@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
+using CQ.Core.Cards;
 using CQ.Core.Battle;
 using CQ.Core.Combat;
 using CQ.Core.Config;
@@ -17,8 +18,17 @@ public class SkillResolverTests
         new FormationConfig { frontBaseTaunt = 100, backBaseTaunt = 50 });
     private static SkillSpec Attack(string type = "basic", string target = "single", int amount = 12) =>
         new SkillSpec { id = type, type = type, damage = new DamageSpec { kind = "physical", target = target, amount = amount } };
+    private static SkillSpec Inject(int count = 1) => new SkillSpec { id = "inject", type = "ult",
+        injectCards = new List<CardInjectionSpec> { new CardInjectionSpec { cardId = "test", count = count } } };
     private static ActionResult Cast(CombatContext ctx, Unit actor, SkillSpec skill) =>
-        SkillResolver.Resolve(skill, ctx, actor);
+        SkillResolver.Resolve(skill, ctx, actor, new Deck(ctx.Rng, new (string, int)[0]));
+
+    private static ActionResult HealCard(CombatContext ctx, Unit target, int amount = 20)
+    {
+        ctx.BeginAction(BattleEventKind.Card, null, "heal", false);
+        CardEffectResolver.Resolve(new CardEffectSpec { type = "heal", target = "single", amount = amount }, ctx, target.Id, "player");
+        return ctx.CompleteAction(targetUnitId: target.Id);
+    }
 
     [TestCase(12, "physical")]
     [TestCase(8, "physical")]
@@ -83,18 +93,20 @@ public class SkillResolverTests
         Assert.AreEqual(5, result.Hits.Single(h => h.TargetUnitId == killed.Id).HpDamage);
     }
 
-    [TestCase(45)]
-    [TestCase(38)]
-    public void Ultimate_Consumes_Full_Charge_No_Self_Charge_But_Victims_Charge(int damage)
+    [TestCase(1)]
+    [TestCase(2)]
+    public void Ultimate_Consumes_Full_Charge_And_Only_Injects_Cards(int count)
     {
         var actor = U("actor", Team.Player); actor.Ult = 3;
         var a = U("a", Team.Enemy, trigger: "hit");
         var b = U("b", Team.Enemy, "back1", "hit");
-        var result = Cast(Ctx(actor, a, b), actor, Attack("ult", "all", damage));
+        var result = Cast(Ctx(actor, a, b), actor, Inject(count));
         Assert.AreEqual(0, actor.Ult);
-        Assert.AreEqual(100 - damage, a.Hp); Assert.AreEqual(100 - damage, b.Hp);
-        Assert.AreEqual(1, a.Ult); Assert.AreEqual(1, b.Ult);
-        Assert.IsTrue(result.Charges.All(c => c.Trigger == "hit"));
+        Assert.AreEqual(100, a.Hp); Assert.AreEqual(100, b.Hp);
+        Assert.AreEqual(0, a.Ult); Assert.AreEqual(0, b.Ult);
+        Assert.IsEmpty(result.Hits); Assert.IsEmpty(result.Charges);
+        Assert.AreEqual(count, result.InjectedCardIds.Count);
+        Assert.Throws<NotSupportedException>(() => ((IList<string>)result.InjectedCardIds).Clear());
     }
 
     [Test]
@@ -103,7 +115,7 @@ public class SkillResolverTests
         var actor = U("actor", Team.Player); actor.Ult = 2;
         var enemy = U("enemy", Team.Enemy);
         var ctx = Ctx(actor, enemy);
-        Assert.IsNull(Cast(ctx, actor, Attack("ult")));
+        Assert.IsNull(Cast(ctx, actor, Inject()));
         Assert.AreEqual(2, actor.Ult); Assert.AreEqual(100, enemy.Hp);
         Assert.IsEmpty(ctx.ActionResults);
     }
@@ -123,19 +135,18 @@ public class SkillResolverTests
     }
 
     [TestCase("self")]
-    [TestCase("single")]
-    [TestCase("all")]
-    public void Heal_Ultimate_Heals_Living_Allies_Clamps_And_Never_Revives(string mode)
+    [TestCase("ally")]
+    [TestCase("dead")]
+    public void Heal_Card_Heals_Chosen_Living_Ally_Clamps_And_Never_Revives(string target)
     {
         var actor = U("actor", Team.Player); actor.Hp = 80; actor.Ult = 3;
         var ally = U("ally", Team.Player, "front2"); ally.Hp = 90;
         var dead = U("dead", Team.Player, "back1"); dead.Hp = 0;
         var enemy = U("enemy", Team.Enemy);
-        var result = Cast(Ctx(actor, ally, dead, enemy), actor,
-            new SkillSpec { id = "heal", type = "ult", heal = new HealSpec { target = mode, amount = 20 } });
-        Assert.AreEqual(100, actor.Hp);
-        Assert.AreEqual(mode == "all" ? 100 : 90, ally.Hp);
-        Assert.AreEqual(0, dead.Hp); Assert.AreEqual(0, actor.Ult);
+        var result = HealCard(Ctx(actor, ally, dead, enemy), target == "self" ? actor : target == "ally" ? ally : dead);
+        Assert.AreEqual(target == "self" ? 100 : 80, actor.Hp);
+        Assert.AreEqual(target == "ally" ? 100 : 90, ally.Hp);
+        Assert.AreEqual(0, dead.Hp); Assert.AreEqual(3, actor.Ult);
         Assert.IsEmpty(result.Hits); Assert.IsEmpty(result.Charges);
     }
 
@@ -290,40 +301,38 @@ public class SkillResolverTests
         }
     }
     [Test]
-    public void Heal_Uses_Percentage_Not_Absolute_Hp_And_Excludes_Enemy_And_Dead()
+    public void Heal_Card_Does_Not_Retarget_To_Lower_Percentage_Ally()
     {
         var actor = U("actor", Team.Player); actor.Ult = 3; actor.Hp = 90;
         var small = U("small", Team.Player, "front2", hp: 40); small.Hp = 20;
         var large = U("large", Team.Player, "back1", hp: 200); large.Hp = 40;
         var dead = U("dead", Team.Player, "back2"); dead.Hp = 0;
         var enemy = U("enemy", Team.Enemy); enemy.Hp = 1;
-        Cast(Ctx(actor, small, large, dead, enemy), actor,
-            new SkillSpec { id = "heal", type = "ult", heal = new HealSpec { target = "single", amount = 20 } });
-        Assert.AreEqual(60, large.Hp); Assert.AreEqual(20, small.Hp);
+        HealCard(Ctx(actor, small, large, dead, enemy), small);
+        Assert.AreEqual(40, large.Hp); Assert.AreEqual(40, small.Hp);
         Assert.AreEqual(90, actor.Hp); Assert.AreEqual(0, dead.Hp); Assert.AreEqual(1, enemy.Hp);
     }
 
     [TestCase(false)]
     [TestCase(true)]
-    public void Heal_Ties_Use_Registration_Order_Including_Self_And_Do_Not_Consume_Rng(bool selfFirst)
+    public void Heal_Card_Selection_Ignores_Registration_Order_And_Does_Not_Consume_Rng(bool selfFirst)
     {
         var actor = U("actor", Team.Player); actor.Ult = 3; actor.Hp = 50;
         var ally = U("ally", Team.Player, "back1", hp: 200); ally.Hp = 100;
         var enemy = U("enemy", Team.Enemy);
         var ctx = selfFirst ? Ctx(actor, ally, enemy) : Ctx(ally, actor, enemy);
-        Cast(ctx, actor, new SkillSpec { id = "heal", type = "ult", heal = new HealSpec { target = "single", amount = 20 } });
-        Assert.AreEqual(selfFirst ? 70 : 50, actor.Hp);
-        Assert.AreEqual(selfFirst ? 100 : 120, ally.Hp);
+        HealCard(ctx, ally);
+        Assert.AreEqual(50, actor.Hp);
+        Assert.AreEqual(120, ally.Hp);
         Assert.AreEqual(new Rng(1).NextInt(0, 100000), ctx.Rng.NextInt(0, 100000));
     }
 
     [Test]
-    public void Heal_Large_Cross_Products_Do_Not_Overflow()
+    public void Heal_Card_Large_Hp_Remains_Exact()
     {
         var actor = U("actor", Team.Player, hp: 2000000000); actor.Hp = 1500000000; actor.Ult = 3;
         var ally = U("ally", Team.Player, "back1", hp: 1800000000); ally.Hp = 1200000000;
-        Cast(Ctx(actor, ally), actor,
-            new SkillSpec { id = "heal", type = "ult", heal = new HealSpec { target = "single", amount = 20 } });
+        HealCard(Ctx(actor, ally), ally);
         Assert.AreEqual(1200000020, ally.Hp); Assert.AreEqual(1500000000, actor.Hp);
     }
 

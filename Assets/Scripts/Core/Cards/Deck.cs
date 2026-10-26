@@ -19,6 +19,7 @@ namespace CQ.Core.Cards
         public IReadOnlyList<string> Hand => _hand;
         public int DrawPileCount => _drawPile.Count;
         public int DiscardPileCount => _discard.Count;
+        public int RemovedCount { get; private set; }
 
         public Deck(Rng rng, IEnumerable<(string id, int count)> defs)
         {
@@ -50,12 +51,19 @@ namespace CQ.Core.Cards
         /// <summary>打出索引 handIndex 的牌。返回卡 id；索引非法返回 null。</summary>
         public string Play(int handIndex)
         {
-            string id = Remove(handIndex);
+            string id = TakeFromHand(handIndex);
             if (id != null) _discard.Add(id);
             return id;
         }
 
         public string Remove(int handIndex)
+        {
+            string id = TakeFromHand(handIndex);
+            if (id != null) RemovedCount++;
+            return id;
+        }
+
+        private string TakeFromHand(int handIndex)
         {
             if (handIndex < 0 || handIndex >= _hand.Count) return null;
             string id = _hand[handIndex];

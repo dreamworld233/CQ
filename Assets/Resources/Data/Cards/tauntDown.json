@@ -1,1 +1,1 @@
-{ "id": "tauntDown", "name": "隐蔽", "effect": { "type": "tauntDown", "amount": 100, "duration": 1 }, "count": 1 }
+{ "id": "tauntDown", "name": "隐蔽", "effect": { "type": "tauntDown", "amount": 100, "duration": 1 }, "count": 0 }

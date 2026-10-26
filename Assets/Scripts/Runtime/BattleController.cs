@@ -202,6 +202,16 @@ namespace CQ.Runtime
         private void SelectCard(int index)
         {
             if (_engine == null || !_engine.CanPlayCards || index < 0 || index >= _engine.Hand.Count) return;
+            if (_engine.CanPlayRemovalCard(index))
+            {
+                if (_engine.PlayRemovalCard(index)) CardPlayed();
+                return;
+            }
+            if (CardEffectResolver.IsGroupEffect(_engine.GetCard(_engine.Hand[index])?.effect))
+            {
+                if (_engine.PlayGroupCard(index)) CardPlayed();
+                return;
+            }
             if (_selectedCard == index) ClearCardSelection();
             else
             {
@@ -235,7 +245,8 @@ namespace CQ.Runtime
         {
             if (SelectedCardIsSlotEffect()) return "点双方圆盘：任意格（含空格）";
             var effect = _engine.GetCard(_engine.Hand[_selectedCard])?.effect;
-            return effect != null && (effect.type == "interrupt" || effect.type == "weaken" || effect.type == "slow")
+            return effect != null && (effect.type == "damage" || effect.type == "vulnerable" ||
+                effect.type == "interrupt" || effect.type == "weaken" || effect.type == "slow")
                 ? "点青色圈存活敌人；取消不影响终结技" : "点青色圈存活我方；取消不影响终结技";
         }
 
@@ -342,6 +353,13 @@ namespace CQ.Runtime
                 return;
             }
 
+            string referenceError = ConfigValidator.ValidateCardReferences(chars.items, cards.items.ToDictionary(c => c.id));
+            if (referenceError != null)
+            {
+                Debug.LogError(referenceError);
+                _ui.ShowError("注牌配置错误，查看 Console");
+                return;
+            }
             _ui.ClearError();
 
             _levels.Clear();
@@ -549,13 +567,23 @@ namespace CQ.Runtime
         private void ConsumeAction(ActionResult result)
         {
             if (result.Sequence <= _logCursor) return;
-            bool any = result.Kind == BattleEventKind.Card;
-            if (any)
+            bool any = result.InjectedCardIds.Count > 0 || result.RemovedCardId != null;
+            if (result.InjectedCardIds.Count > 0)
             {
+                string cards = string.Join("、", result.InjectedCardIds.GroupBy(id => id)
+                    .Select(group => (_engine.GetCard(group.Key)?.name ?? group.Key) + "×" + group.Count()));
+                PushLog(UnitName(result.ActorId) + " 终结技 → 注入抽牌堆：" + cards + "（后续抽取）");
+                if (_views.TryGetValue(result.ActorId, out var caster)) caster.FloatText("注牌 " + cards, Color.cyan);
+            }
+            if (result.RemovedCardId != null)
+                PushLog("卡〔" + (_engine.GetCard(result.RemovedCardId)?.name ?? result.RemovedCardId) + "〕 → 移出本场，不回洗");
+            if (result.Kind == BattleEventKind.Card && result.RemovedCardId == null)
+            {
+                any = true;
                 string target = result.TargetTeam.HasValue && !string.IsNullOrEmpty(result.TargetSlotId)
                     ? (result.TargetTeam.Value == Team.Player ? "我方 " : "敌方 ") +
                         SlotLabel(result.TargetSlotId) + "（" + result.TargetSlotId + "）"
-                    : UnitName(result.TargetUnitId);
+                    : result.TargetTeam.HasValue ? "全体敌人" : UnitName(result.TargetUnitId);
                 var card = _engine.GetCard(result.ActionId);
                 PushLog("卡〔" + (card != null ? card.name : result.ActionId) + "〕 → " + target);
             }
@@ -592,7 +620,8 @@ namespace CQ.Runtime
         {
             string action = ActionLabel(ev);
             if (ev.Kind == BattleEventKind.Card)
-                return "卡" + action + " → " + UnitName(ev.TargetId);
+                return "卡" + action + " → " + UnitName(ev.TargetId) +
+                    (ev.HpDelta == 0 ? "" : " " + (ev.HpDelta > 0 ? "+" : "") + ev.HpDelta + (ev.TargetDead ? "（倒）" : ""));
             string actor = UnitName(ev.ActorId);
             if (ev.HpDelta == 0) return actor + " " + action;
             return actor + " " + action + " → " + UnitName(ev.TargetId)
@@ -652,7 +681,9 @@ namespace CQ.Runtime
                     case StatusType.Weaken: tags.Add("弱" + status.Percent + "%"); break;
                     case StatusType.Slow: tags.Add("慢" + status.Percent + "%"); break;
                     case StatusType.Interrupt: tags.Add("打断"); break;
+                    case StatusType.Vulnerable: tags.Add("易伤+" + status.Percent + "%"); break;
                 }
+                if (status.Turn == "round") tags[tags.Count - 1] += "(" + status.Duration + "回合)";
             }
             int haste = _engine.Ctx.GetHaste(unit.Id);
             if (haste > 0) tags.Add("急" + haste + "%");
@@ -666,7 +697,7 @@ namespace CQ.Runtime
             // Displayed numbers are source-modified attack power, not target HP loss.
             if (preview.Current != null)
                 lines.Add((preview.PendingRelease != null ? "续 " : "") + IntentStepText(preview.Current));
-            if (lines.Count > 0) lines.Add("伤害为盾前值");
+            if (lines.Count > 0) lines.Add("源伤害，另计易伤/护盾");
             return string.Join("\n", lines);
         }
 

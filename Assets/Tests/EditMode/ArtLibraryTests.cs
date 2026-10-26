@@ -27,9 +27,10 @@ public class ArtLibraryTests
         Assert.IsNotNull(ArtLibrary.RingSprite(), "缺 按钮选中框（选中圆环）");
 
         var dmg = new SkillSpec { id = "d", damage = new DamageSpec { amount = 1 } };
-        var heal = new SkillSpec { id = "h", heal = new HealSpec { amount = 1 } };
+        var injection = new SkillSpec { id = "h", injectCards = new System.Collections.Generic.List<CardInjectionSpec>
+            { new CardInjectionSpec { cardId = "heal", count = 1 } } };
         Assert.IsNotNull(ArtLibrary.SkillIcon(dmg), "伤害技能应有占位图标（攻击）");
-        Assert.IsNotNull(ArtLibrary.SkillIcon(heal), "治疗技能应有占位图标（增益）");
-        Assert.IsNull(ArtLibrary.SkillIcon(new SkillSpec { id = "x" }), "无伤害/无治疗不应给图标");
+        Assert.IsNotNull(ArtLibrary.SkillIcon(injection), "注牌终结技应有占位图标（增益）");
+        Assert.IsNull(ArtLibrary.SkillIcon(new SkillSpec { id = "x" }), "无伤害/无注牌不应给图标");
     }
 }

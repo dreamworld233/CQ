@@ -11,8 +11,8 @@ namespace CQ.Core.Config
     {
         private static readonly string[] SkillTypes = { "basic", "ult" };
         private static readonly string[] IntentTypes = { "attack", "charge", "attackUp", "multi", "debuff" };
-        private static readonly string[] CardTypes = { "interrupt", "weaken", "slow", "haste", "shield", "attackUp", "tauntUp", "tauntDown" };
-        private static readonly string[] StatusIds = { "weaken", "shield", "attackUp", "slow", "interrupt" };
+        private static readonly string[] CardTypes = { "damage", "heal", "remove", "vulnerable", "interrupt", "weaken", "slow", "haste", "shield", "attackUp", "tauntUp", "tauntDown" };
+        private static readonly string[] StatusIds = { "vulnerable", "weaken", "shield", "attackUp", "slow", "interrupt" };
         private static readonly string[] Turns = { "round", "once" };
 
         private static bool In(string[] set, string value) => Array.IndexOf(set, value) >= 0;
@@ -38,21 +38,50 @@ namespace CQ.Core.Config
                 if (string.IsNullOrEmpty(s.name)) return "技能缺 name";
                 if (!In(SkillTypes, s.type)) return "技能 type 非法: " + s.type;
                 if (s.type == "basic") basics++; else ults++;
-                if ((s.damage == null) == (s.heal == null)) return "技能须恰有 damage/heal 之一";
+                if (s.type == "ult")
+                {
+                    string error = ValidateInjection(s);
+                    if (error != null) return error;
+                    continue;
+                }
+                if (s.heal != null || (s.injectCards != null && s.injectCards.Count > 0))
+                    return "basic 不可治疗或注牌";
                 if (s.damage != null)
                 {
                     if (s.damage.amount <= 0) return "damage amount 须 > 0";
                     if (s.damage.kind != "physical" && s.damage.kind != "magic") return "damage kind 非法";
                     if (s.damage.target != "single" && s.damage.target != "all") return "damage target 非法";
                 }
-                if (s.heal != null)
-                {
-                    if (s.heal.amount <= 0) return "heal amount 须 > 0";
-                    if (s.heal.target != "single" && s.heal.target != "self" && s.heal.target != "all") return "heal target 非法";
-                }
                 if (s.type == "basic" && s.damage == null) return "basic 须为攻击";
             }
             if (basics != 1 || ults != 1) return "须恰有 basic/ult 各一个";
+            return null;
+        }
+
+        public static string ValidateInjection(SkillSpec skill)
+        {
+            if (skill == null || skill.type != "ult") return "注牌须为终结技";
+            if (skill.damage != null || skill.heal != null) return "终结技不可直接伤害或治疗";
+            if (skill.injectCards == null || skill.injectCards.Count == 0) return "终结技须配置 injectCards";
+            foreach (var entry in skill.injectCards)
+                if (entry == null || string.IsNullOrWhiteSpace(entry.cardId) || entry.count <= 0)
+                    return "注牌须有 cardId 且 count > 0";
+            return null;
+        }
+
+        public static string ValidateCardReferences(IEnumerable<CharacterConfig> characters,
+            IReadOnlyDictionary<string, CardConfig> cards)
+        {
+            foreach (var character in characters)
+                foreach (var skill in character.skills ?? new List<SkillSpec>())
+                {
+                    if (skill?.type != "ult") continue;
+                    string error = ValidateInjection(skill);
+                    if (error != null) return character.id + "/" + skill.id + ": " + error;
+                    foreach (var entry in skill.injectCards)
+                        if (!cards.TryGetValue(entry.cardId, out var card) || ValidateCard(card) != null)
+                            return character.id + "/" + skill.id + " 引用了无效卡牌: " + entry.cardId;
+                }
             return null;
         }
 
@@ -131,8 +160,28 @@ namespace CQ.Core.Config
             if (string.IsNullOrEmpty(c.name)) return "缺 name";
             if (c.effect == null) return "缺 effect";
             if (!In(CardTypes, c.effect.type)) return "卡效果 type 非法: " + c.effect.type;
-            if (c.count <= 0) return "count 须 > 0";
-            if (c.effect.type == "tauntUp" || c.effect.type == "tauntDown")
+            if (c.count < 0) return "count 不可负";
+            if (!string.IsNullOrEmpty(c.effect.target) && c.effect.target != "single" && c.effect.target != "all")
+                return "卡效果 target 须为 single|all";
+            if (c.effect.target == "all" && c.effect.type != "damage" && c.effect.type != "weaken" && c.effect.type != "vulnerable")
+                return "此卡效果不支持群体目标";
+            if (c.effect.type == "damage")
+            {
+                if (c.effect.target != "single" && c.effect.target != "all") return "伤害卡须指定 target";
+                if (c.effect.amount <= 0) return "伤害卡 amount 须 > 0";
+            }
+            else if (c.effect.type == "heal")
+            {
+                if (c.effect.target != "single" || c.effect.amount <= 0)
+                    return "治疗卡须 single 且 amount > 0";
+            }
+            else if (c.effect.type == "remove")
+            {
+                if (!string.IsNullOrEmpty(c.effect.target) || c.effect.amount != 0 ||
+                    c.effect.percent != 0 || c.effect.duration != 0)
+                    return "移除卡不可配置目标或额外效果";
+            }
+            else if (c.effect.type == "tauntUp" || c.effect.type == "tauntDown")
             {
                 if (c.effect.amount <= 0 || c.effect.duration <= 0) return "格子卡 amount/duration 须 > 0";
             }

@@ -41,7 +41,7 @@ public class DeterminismTests
             new SkillSpec { id = id + "_basic", name = "普攻", type = "basic",
                 damage = new DamageSpec { kind = "physical", target = "single", amount = atk } },
             new SkillSpec { id = id + "_ult", name = "终结技", type = "ult",
-                damage = new DamageSpec { kind = "physical", target = "all", amount = atk * 3 } }
+                injectCards = new List<CardInjectionSpec> { new CardInjectionSpec { cardId = "generated_shield", count = 1 } } }
         }
     };
 
@@ -81,7 +81,8 @@ public class DeterminismTests
         AssignSlots(chars);
         var ids = enemies.Select(e => e.id).ToList();
         var catalog = enemies.ToDictionary(e => e.id);
-        return BattleEngine.Create(seed, chars, ids, catalog, cards,
+        return BattleEngine.Create(seed, chars, ids, catalog,
+            cards.Concat(new[] { Card("generated_shield", "shield", amount: 20, count: 0) }),
             SlotIds.Take(ids.Count).ToArray(), TestFormation());
     }
 
@@ -108,7 +109,8 @@ public class DeterminismTests
         foreach (var action in e.ActionResults)
         {
             sb.Append(" action=").Append(action.Sequence).Append(':').Append(action.ActorId).Append(':').Append(action.ActionId)
-                .Append(':').Append(action.TargetUnitId).Append(':').Append(action.TargetTeam).Append(':').Append(action.TargetSlotId);
+                .Append(':').Append(action.TargetUnitId).Append(':').Append(action.TargetTeam).Append(':').Append(action.TargetSlotId)
+                .Append(":injected=").Append(string.Join(",", action.InjectedCardIds)).Append(":removed=").Append(action.RemovedCardId);
             foreach (var hit in action.Hits) sb.Append(" hit=").Append(hit.TargetUnitId).Append(':').Append(hit.HpDamage).Append(':').Append(hit.ShieldAbsorbed);
             foreach (var charge in action.Charges) sb.Append(" charge=").Append(charge.UnitId).Append(':').Append(charge.After);
         }

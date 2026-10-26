@@ -114,7 +114,17 @@ public class BalanceTests
             var players = eng.Players.Where(u => !u.IsDead).ToArray();
             var enemies = eng.Enemies.Where(u => !u.IsDead).ToArray();
             bool played = false;
-            if (card.effect.type == "tauntUp" || card.effect.type == "tauntDown")
+            if (eng.CanPlayRemovalCard(index))
+            {
+                Assert.IsTrue(eng.PlayRemovalCard(index));
+                played = true;
+            }
+            else if (eng.CanPlayGroupCard(index))
+            {
+                Assert.IsTrue(eng.PlayGroupCard(index));
+                played = true;
+            }
+            else if (card.effect.type == "tauntUp" || card.effect.type == "tauntDown")
             {
                 // Concentrate attacks on the healthy tank; protect the most fragile survivor.
                 var target = card.effect.type == "tauntUp"
@@ -131,6 +141,8 @@ public class BalanceTests
                 System.Collections.Generic.IEnumerable<Unit> targets;
                 switch (card.effect.type)
                 {
+                    case "damage":
+                    case "vulnerable":
                     case "interrupt":
                     case "weaken":
                     case "slow":
@@ -138,6 +150,10 @@ public class BalanceTests
                             .ThenByDescending(u => eng.CurrentIntentOf(u.Id)?.nextDamage ?? 0)
                             .ThenByDescending(u => eng.CurrentIntentOf(u.Id)?.damage ?? 0)
                             .ThenByDescending(u => u.BaseSpeed).ThenBy(u => u.Id, System.StringComparer.Ordinal);
+                        break;
+                    case "heal":
+                        targets = players.OrderBy(u => (double)u.Hp / u.MaxHp)
+                            .ThenBy(u => u.Id, System.StringComparer.Ordinal);
                         break;
                     case "shield":
                         targets = players.OrderByDescending(u => eng.Ctx.EffectiveTaunt(u))
@@ -164,8 +180,6 @@ public class BalanceTests
         foreach (var player in eng.Players.OrderBy(u => u.Id, System.StringComparer.Ordinal))
         {
             if (!eng.CanRequestUltimate(player.Id)) continue;
-            var skill = eng.UltimateOf(player.Id);
-            if (skill.heal != null && !eng.Players.Any(u => !u.IsDead && u.Hp < u.MaxHp)) continue;
             Assert.IsTrue(eng.RequestUltimate(player.Id), "合法就绪终结技应允许请求: " + player.Id);
         }
     }
@@ -216,6 +230,12 @@ public class BalanceTests
             RequestReadyUltimates(eng);
             Assert.IsTrue(eng.Confirm(eng.BattleId, result.Sequence));
         }
+        int injected = eng.ActionResults.Sum(action => action.InjectedCardIds.Count);
+        int usedSkills = eng.ActionResults.Count(action => action.Kind == BattleEventKind.Card &&
+            (action.ActionId == "gale_slash" || action.ActionId == "heal" || action.ActionId == "lightning"));
+        TestContext.WriteLine($"injected={injected} skillCardsUsed={usedSkills} slagRemoved={eng.Deck.RemovedCount}");
+        Assert.AreEqual(5 + injected, eng.Hand.Count + eng.Deck.DrawPileCount + eng.Deck.DiscardPileCount + eng.Deck.RemovedCount);
+        if (level == 3) Assert.Greater(usedSkills, 0, "最终关至少兑现一次生成技能牌");
         string summary = $"level={level} seed={seed} round={eng.Round} steps={step} winner={eng.Winner} HP: {RemainingHp(eng)}";
         TestContext.WriteLine(summary);
         Assert.IsTrue(eng.IsFinished, "模拟必须在步数/回合上限内结束: " + summary);

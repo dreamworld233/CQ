@@ -22,7 +22,7 @@ public class IntentFlowTests
             new SkillSpec { id = "sword_basic", name = "普攻", type = "basic",
                 damage = new DamageSpec { kind = "physical", target = "single", amount = 12 } },
             new SkillSpec { id = "sword_ult", name = "必杀", type = "ult",
-                damage = new DamageSpec { kind = "physical", target = "single", amount = 24 } }
+                injectCards = new List<CardInjectionSpec> { new CardInjectionSpec { cardId = "generated_shield", count = 1 } } }
         }
     };
 
@@ -61,7 +61,8 @@ public class IntentFlowTests
         var enemyList = enemies.ToList();
         var ids = enemyList.Select(e => e.id).ToList();
         var catalog = enemyList.ToDictionary(e => e.id);
-        return BattleEngine.Create(seed, chars, ids, catalog, cards,
+        return BattleEngine.Create(seed, chars, ids, catalog,
+            cards.Concat(new[] { Card("generated_shield", "shield", amount: 20, count: 0) }),
             formationConfig: new FormationConfig { frontBaseTaunt = 100, backBaseTaunt = 50 });
     }
 

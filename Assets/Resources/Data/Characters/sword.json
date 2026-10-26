@@ -21,11 +21,9 @@
       "id": "sword_ult",
       "name": "疾风斩",
       "type": "ult",
-      "damage": {
-        "kind": "physical",
-        "target": "all",
-        "amount": 45
-      }
+      "injectCards": [
+        { "cardId": "gale_slash", "count": 1 }
+      ]
     }
   ],
   "ultChargeTrigger": "attack",

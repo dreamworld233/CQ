@@ -1,0 +1,1 @@
+{ "id": "lightning", "name": "落雷", "effect": { "type": "damage", "target": "all", "amount": 30 }, "count": 0 }
