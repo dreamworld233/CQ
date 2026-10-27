@@ -211,16 +211,57 @@ namespace CQ.Core.Config
             return null;
         }
 
+        public static string ValidateLevelReferences(LevelConfig level, IEnumerable<CharacterConfig> characters,
+            IReadOnlyDictionary<string, EnemyConfig> enemies, IReadOnlyDictionary<string, CardConfig> cards)
+        {
+            string error = ValidateLevel(level);
+            if (error != null) return error;
+            var characterIds = new HashSet<string>();
+            foreach (var character in characters) characterIds.Add(character.id);
+            if (level.players != null)
+                foreach (string id in level.players)
+                    if (!characterIds.Contains(id)) return "关卡角色不存在: " + id;
+            foreach (var wave in level.waves)
+                foreach (string id in wave.enemies)
+                    if (!enemies.ContainsKey(id)) return "关卡敌人不存在: " + id;
+            if (level.tutorialDrawOrder != null)
+                foreach (string id in level.tutorialDrawOrder)
+                    if (!cards.ContainsKey(id)) return "教学卡牌不存在: " + id;
+            return null;
+        }
+
         public static string ValidateLevel(LevelConfig l)
         {
             if (l == null) return "空对象";
             if (l.id <= 0) return "id 须 > 0";
             if (l.waves == null || l.waves.Count == 0) return "waves 空";
+            if (l.players != null)
+            {
+                if (l.players.Length == 0 || l.players.Length > Formation.Capacity) return "players 数量非法";
+                var players = new HashSet<string>();
+                foreach (string id in l.players)
+                    if (string.IsNullOrEmpty(id) || !players.Add(id)) return "players 含空值或重复角色";
+            }
+            if (l.tutorialDrawOrder != null && l.tutorialDrawOrder.Length > 0)
+            {
+                if (string.IsNullOrEmpty(l.tutorialIntro)) return "教学牌序必须明示 tutorialIntro";
+                foreach (string id in l.tutorialDrawOrder)
+                    if (string.IsNullOrEmpty(id)) return "教学牌序含空卡牌id";
+            }
+            if (l.tutorialHints != null)
+                foreach (string hint in l.tutorialHints)
+                    if (string.IsNullOrEmpty(hint)) return "教学提示不可空";
             foreach (var w in l.waves)
             {
                 if (w == null || w.enemies == null || w.enemies.Length == 0) return "wave 的 enemies 空";
                 if (w.enemies.Length > Formation.Capacity) return "wave 超过五格容量";
                 if (w.slots == null || w.slots.Length != w.enemies.Length) return "wave slots 必须与 enemies 等长";
+                if (w.maxHp != null)
+                {
+                    if (w.maxHp.Length != w.enemies.Length) return "wave maxHp 必须与 enemies 等长";
+                    foreach (int hp in w.maxHp)
+                        if (hp <= 0) return "wave maxHp 须 > 0";
+                }
                 var occupied = new HashSet<string>();
                 for (int i = 0; i < w.slots.Length; i++)
                 {

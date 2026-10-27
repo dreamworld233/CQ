@@ -1,1 +1,13 @@
-{ "id": 1, "name": "群怪来袭", "waves": [ { "enemies": ["grunt", "grunt", "grunt"], "slots": ["front1", "front2", "back1"] } ] }
+{
+  "id": 1,
+  "name": "第一课：看穿意图",
+  "players": ["sword", "guard"],
+  "tutorialIntro": "剑士先手，敌人随后，护卫最后。敌人首轮群攻、次轮高伤单攻；读完提示后点开战。教学已安排前几次抽牌，不限制操作。",
+  "tutorialDrawOrder": ["weaken", "interrupt", "vulnerable", "strike", "sweep"],
+  "tutorialHints": [
+    "先看敌人头顶群攻意图：可用虚弱降低伤害，保留打断给下轮。点开始行动后双方按速度自动普攻，行动中不能出策略牌。",
+    "敌人将打出致命单攻！先点打断，再点敌人取消本回合意图，然后开始行动；剑士一击还不够，护卫会在敌人原本出手之后收尾。",
+    "若未按推荐路线结束，仍可继续：重新查看当前意图，用现有策略牌应对；敌人会交替使用群攻和高伤单攻。也可以重开，再尝试第二轮打断。"
+  ],
+  "waves": [{ "enemies": ["grunt"], "slots": ["front1"], "maxHp": [40] }]
+}

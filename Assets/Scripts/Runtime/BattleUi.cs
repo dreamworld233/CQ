@@ -55,6 +55,14 @@ namespace CQ.Runtime
         private readonly List<Button> _handButtons = new List<Button>();
         public Action<int> OnSelectCard;
         public Action OnCancelCard;
+        private Button _pileButton;
+        private GameObject _pilePanel;
+        private TextMeshProUGUI _pileText;
+        private ScrollRect _pileScroll;
+        private BattleEngine _handEngine;
+        private GameObject _tutorialPanel;
+        private TextMeshProUGUI _tutorialTitle;
+        private TextMeshProUGUI _tutorialHint;
 
         // LateUpdate must use the same input gate as the controller, not overwrite it with readiness.
         public void SetCardTargeting(bool targeting)
@@ -62,7 +70,7 @@ namespace CQ.Runtime
             _cardTargeting = targeting;
             foreach (var binding in _ultimates)
             {
-                bool ready = !targeting && binding.Engine.CanRequestUltimate(binding.ActorId);
+                bool ready = !targeting && !_pilePanel.activeSelf && binding.Engine.CanRequestUltimate(binding.ActorId);
                 binding.Button.interactable = ready;
                 binding.Button.targetGraphic.raycastTarget = ready;
             }
@@ -103,7 +111,7 @@ namespace CQ.Runtime
                 if (setup) continue;
                 bool executing = engine.CurrentAction?.ActorId == binding.ActorId &&
                     engine.CurrentAction.ActionId == engine.UltimateOf(binding.ActorId)?.id;
-                bool ready = !_cardTargeting && engine.CanRequestUltimate(binding.ActorId);
+                bool ready = !_cardTargeting && !_pilePanel.activeSelf && engine.CanRequestUltimate(binding.ActorId);
                 binding.Label.text = engine.IsFinished ? "结束" : actor.IsDead ? "死亡" : executing ? "释放中" :
                     engine.HasUltimateRequest(binding.ActorId) ? "排队" : ready ? "就绪 · 注牌" : "未满";
                 binding.Button.interactable = ready;
@@ -143,6 +151,8 @@ namespace CQ.Runtime
             BuildLeftPanel();
             BuildBottomControls();
             BuildHand();
+            BuildTutorial();
+            BuildPilePanel();
             BuildErrorPanel();
         }
 
@@ -317,15 +327,150 @@ namespace CQ.Runtime
             _handScroll.horizontalScrollbar = scrollbar;
         }
 
+        private void BuildTutorial()
+        {
+            var panel = UiKit.AddRect(CanvasRect, "Tutorial", new Vector2(0.22f, 1f), Vector2.one,
+                new Vector2(0f, 1f), Vector2.zero, Vector2.zero);
+            panel.offsetMin = new Vector2(0f, -142f);
+            panel.offsetMax = new Vector2(-26f, -16f);
+            var image = panel.gameObject.AddComponent<Image>();
+            image.color = PanelBg;
+            image.raycastTarget = false;
+            _tutorialPanel = panel.gameObject;
+            _tutorialTitle = UiKit.MakeText(panel, "", 26, new Color(0.55f, 0.80f, 1f), TextAnchor.UpperLeft, true);
+            var title = (RectTransform)_tutorialTitle.transform;
+            title.anchorMin = new Vector2(0f, 1f);
+            title.offsetMin = new Vector2(18f, -42f);
+            title.offsetMax = new Vector2(-18f, -8f);
+            _tutorialHint = UiKit.MakeText(panel, "", 26, Color.white, TextAnchor.UpperLeft);
+            var hint = (RectTransform)_tutorialHint.transform;
+            hint.offsetMin = new Vector2(18f, 10f);
+            hint.offsetMax = new Vector2(-18f, -46f);
+            _tutorialHint.enableWordWrapping = true;
+            _tutorialHint.enableAutoSizing = true;
+            _tutorialHint.fontSizeMin = 20f;
+            _tutorialHint.fontSizeMax = 26f;
+            _tutorialPanel.SetActive(false);
+        }
+
+        public void RefreshTutorial(LevelConfig level, BattleEngine engine)
+        {
+            bool visible = engine != null && !string.IsNullOrEmpty(level?.tutorialIntro);
+            _tutorialPanel.SetActive(visible);
+            if (!visible) return;
+            _tutorialTitle.text = level.name + " · 教学牌序已安排，普通战斗随机抽取";
+            if (engine.Flow == BattleFlow.Setup) _tutorialHint.text = level.tutorialIntro;
+            else if (engine.IsFinished) _tutorialHint.text = engine.Winner == Team.Player
+                ? "教学战斗胜利！可继续下一关；也可重开尝试其他出牌方式。"
+                : "本次战斗失败，可重开重试。先观察意图、保留关键牌，再开始行动。";
+            else
+            {
+                string hint = level.tutorialHints != null && level.tutorialHints.Length > 0
+                    ? level.tutorialHints[Mathf.Min(engine.CurrentRound - 1, level.tutorialHints.Length - 1)]
+                    : level.tutorialIntro;
+                _tutorialHint.text = hint + (engine.SkippedRoundDraw ? " 本轮因满手跳抽，腾位不会补抽。" : "");
+            }
+        }
+
+        private void BuildPilePanel()
+        {
+            _pileButton = UiKit.MakeButton(CanvasRect, "查看牌堆", 24, ButtonBg);
+            Rect((RectTransform)_pileButton.transform, 1f, 0f, 1f, 0f,
+                new Vector2(-36f, 180f), new Vector2(500f, 48f));
+            _pileButton.onClick.AddListener(() =>
+            {
+                OnCancelCard?.Invoke();
+                _pilePanel.SetActive(true);
+                _pilePanel.transform.SetAsLastSibling();
+                SetCardTargeting(false);
+                RefreshPileContents();
+                _pileScroll.verticalNormalizedPosition = 1f;
+            });
+
+            var overlay = UiKit.MakePanel(CanvasRect, new Color(0f, 0f, 0f, 0.75f));
+            overlay.name = "PileOverlay";
+            _pilePanel = overlay.gameObject;
+            var panel = UiKit.AddRect(overlay.transform, "PilePanel", new Vector2(0.5f, 0.5f),
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(920f, 720f));
+            panel.gameObject.AddComponent<Image>().color = PanelBg;
+            var title = UiKit.MakeText(panel, "牌堆组成 · 不显示抽取顺序", 32, Color.white, TextAnchor.UpperLeft, true);
+            Rect((RectTransform)title.transform, 0f, 1f, 0f, 1f, new Vector2(28f, -24f), new Vector2(680f, 48f));
+            var close = UiKit.MakeButton(panel, "关闭", 26, ButtonBg);
+            Rect((RectTransform)close.transform, 1f, 1f, 1f, 1f, new Vector2(-24f, -20f), new Vector2(120f, 52f));
+            close.onClick.AddListener(ClosePilePanel);
+            var viewport = UiKit.AddRect(panel, "PileViewport", Vector2.zero, Vector2.one,
+                Vector2.zero, Vector2.zero, Vector2.zero);
+            viewport.offsetMin = new Vector2(28f, 70f);
+            viewport.offsetMax = new Vector2(-28f, -88f);
+            viewport.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
+            viewport.gameObject.AddComponent<RectMask2D>();
+            _pileText = UiKit.MakeText(viewport, "", 26, Color.white, TextAnchor.UpperLeft);
+            _pileText.enableWordWrapping = true;
+            var content = (RectTransform)_pileText.transform;
+            content.anchorMin = new Vector2(0f, 1f);
+            content.anchorMax = Vector2.one;
+            content.pivot = new Vector2(0f, 1f);
+            content.sizeDelta = Vector2.zero;
+            _pileScroll = viewport.gameObject.AddComponent<ScrollRect>();
+            _pileScroll.viewport = viewport;
+            _pileScroll.content = content;
+            _pileScroll.horizontal = false;
+            _pileScroll.movementType = ScrollRect.MovementType.Clamped;
+            _pileScroll.scrollSensitivity = 36f;
+            var hint = UiKit.MakeText(panel, "抽牌堆耗尽才回洗弃牌；查看不暂停自动行动。上下拖动查看。", 22,
+                new Color(0.75f, 0.80f, 0.85f), TextAnchor.MiddleLeft);
+            Rect((RectTransform)hint.transform, 0f, 0f, 0f, 0f, new Vector2(28f, 16f), new Vector2(864f, 44f));
+            _pilePanel.SetActive(false);
+        }
+
+        public void ClosePilePanel()
+        {
+            _pilePanel.SetActive(false);
+            SetCardTargeting(_cardTargeting);
+        }
+
+        private void RefreshPileContents()
+        {
+            if (_handEngine == null) return;
+            var text = new System.Text.StringBuilder();
+            AppendPile(text, "抽牌堆", _handEngine.Deck.DrawPileCount, _handEngine.Deck.DrawPileContents);
+            AppendPile(text, "弃牌堆", _handEngine.Deck.DiscardPileCount, _handEngine.Deck.DiscardPileContents);
+            text.Append("已移出本场：").Append(_handEngine.Deck.RemovedCount).Append(" 张（不回洗）");
+            _pileText.text = text.ToString();
+            float height = _pileText.GetPreferredValues(_pileText.text, _pileScroll.viewport.rect.width, Mathf.Infinity).y;
+            _pileScroll.content.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical,
+                Mathf.Max(_pileScroll.viewport.rect.height, height));
+        }
+
+        private void AppendPile(System.Text.StringBuilder text, string title, int count, IReadOnlyDictionary<string, int> cards)
+        {
+            text.Append(title).Append(" · ").Append(count).Append(" 张\n");
+            if (count == 0) text.Append("（空）\n");
+            foreach (var entry in cards)
+            {
+                var card = _handEngine.GetCard(entry.Key);
+                text.Append(card.name).Append(" × ").Append(entry.Value).Append("  —  ")
+                    .Append(CardDescription(card.effect)).Append('\n');
+            }
+            text.Append('\n');
+        }
+
         public void RefreshHand(BattleEngine engine, int selectedIndex, string targetHint)
         {
+            if (!ReferenceEquals(_handEngine, engine)) ClosePilePanel();
+            _handEngine = engine;
+            _pileButton.interactable = engine != null;
+            _pileButton.GetComponentInChildren<TextMeshProUGUI>().text = engine == null ? "查看牌堆" :
+                "查看牌堆 · 抽 " + engine.Deck.DrawPileCount + " / 弃 " + engine.Deck.DiscardPileCount +
+                " / 移除 " + engine.Deck.RemovedCount;
+            if (_pilePanel.activeSelf) RefreshPileContents();
             int count = engine != null ? engine.Hand.Count : 0;
             while (_handButtons.Count < count)
             {
                 int index = _handButtons.Count;
                 var button = UiKit.MakeButton(_handContent, "", 23, ButtonBg);
                 Rect((RectTransform)button.transform, 0f, 0.5f, 0f, 0.5f,
-                    new Vector2(index * 212f, 0f), new Vector2(204f, 102f));
+                    new Vector2(index * 268f, 0f), new Vector2(260f, 102f));
                 var label = button.GetComponentInChildren<TextMeshProUGUI>();
                 label.enableWordWrapping = true;
                 label.enableAutoSizing = true;
@@ -345,17 +490,30 @@ namespace CQ.Runtime
                 var card = engine.GetCard(engine.Hand[i]);
                 bool selected = i == selectedIndex;
                 button.GetComponentInChildren<TextMeshProUGUI>().text =
-                    (selected ? "已选 " : "") + (card != null ? card.name : engine.Hand[i]) + "\n" + CardDescription(card?.effect);
+                    "<b>" + (selected ? "已选 · " : "") + (card != null ? card.name : engine.Hand[i]) +
+                    "</b>\n<size=75%>" + CardKeywords(card?.effect) + "</size>\n" + CardDescription(card?.effect);
                 button.interactable = engine.CanPlayCards;
-                ((Image)button.targetGraphic).color = selected ? new Color(0.48f, 0.34f, 0.08f) : ButtonBg;
+                ((Image)button.targetGraphic).color = selected ? new Color(0.48f, 0.34f, 0.08f) :
+                    card?.effect.type == "heal" ? new Color(0.10f, 0.30f, 0.24f) :
+                    card?.effect.type == "remove" ? new Color(0.26f, 0.23f, 0.30f) : ButtonBg;
             }
-            _handContent.sizeDelta = new Vector2(Mathf.Max(0f, count * 212f - 8f), 0f);
+            _handContent.sizeDelta = new Vector2(Mathf.Max(0f, count * 268f - 8f), 0f);
             _cancelCard.interactable = selectedIndex >= 0;
-            _handHint.text = "手牌 " + count + "/" + CQ.Core.Cards.Deck.MaxHandSize +
-                (engine != null ? " · 抽牌堆 " + engine.Deck.DrawPileCount + " / 弃牌堆 " + engine.Deck.DiscardPileCount : "") + " · " +
+            _handHint.text = "手牌 " + count + "/" + CQ.Core.Cards.Deck.MaxHandSize + " · " +
                 (selectedIndex >= 0 ? targetHint : engine != null && engine.CanPlayCards
-                    ? (engine.SkippedRoundDraw ? "本回合因满手未抽牌；" : "") + "单体选目标，群体点按生效"
+                    ? (engine.SkippedRoundDraw ? "满手跳抽，本轮不补；" : count == CQ.Core.Cards.Deck.MaxHandSize ? "满手将跳过下轮抽牌；" : "") + "可连续出牌 · 横滑查看"
                     : "仅策略窗口可出牌");
+        }
+
+        private static string CardKeywords(CardEffectSpec effect)
+        {
+            if (effect == null) return "未知";
+            if (effect.type == "remove") return "污染 · 点击移除 · 不回洗";
+            if (effect.type == "heal") return "单体治疗 · 选我方 · 循环";
+            if (effect.type == "tauntUp" || effect.type == "tauntDown") return "格子 · 选双方 · 循环";
+            string target = effect.target == "all" ? "群体 · 点击即用" : "单体 · 选目标";
+            return target + (effect.type == "interrupt" || effect.type == "vulnerable" || effect.type == "weaken"
+                ? " · 本回合" : " · 循环");
         }
 
         private static string CardDescription(CardEffectSpec effect)

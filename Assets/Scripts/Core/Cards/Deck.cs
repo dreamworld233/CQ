@@ -15,15 +15,28 @@ namespace CQ.Core.Cards
         private readonly List<string> _drawPile = new List<string>();
         private readonly List<string> _hand = new List<string>();
         private readonly List<string> _discard = new List<string>();
+        private readonly Queue<string> _tutorialDrawOrder;
 
         public IReadOnlyList<string> Hand => _hand;
         public int DrawPileCount => _drawPile.Count;
         public int DiscardPileCount => _discard.Count;
         public int RemovedCount { get; private set; }
 
-        public Deck(Rng rng, IEnumerable<(string id, int count)> defs)
+        public IReadOnlyDictionary<string, int> DrawPileContents => CountCards(_drawPile);
+        public IReadOnlyDictionary<string, int> DiscardPileContents => CountCards(_discard);
+
+        private static IReadOnlyDictionary<string, int> CountCards(IEnumerable<string> cards)
+        {
+            var counts = new SortedDictionary<string, int>(System.StringComparer.Ordinal);
+            foreach (string id in cards)
+                counts[id] = counts.TryGetValue(id, out int count) ? count + 1 : 1;
+            return counts;
+        }
+
+        public Deck(Rng rng, IEnumerable<(string id, int count)> defs, IEnumerable<string> tutorialDrawOrder = null)
         {
             _rng = rng;
+            _tutorialDrawOrder = new Queue<string>(tutorialDrawOrder ?? System.Array.Empty<string>());
             foreach (var (id, count) in defs)
                 for (int i = 0; i < count; i++)
                     _drawPile.Add(id);
@@ -42,8 +55,19 @@ namespace CQ.Core.Cards
                     _discard.Clear();
                     Shuffle(_drawPile);
                 }
-                string id = _drawPile[_drawPile.Count - 1];
-                _drawPile.RemoveAt(_drawPile.Count - 1);
+                int index = _drawPile.Count - 1;
+                if (_tutorialDrawOrder.Count > 0)
+                {
+                    // 未生成的教学牌不补发，缺牌时仍按现有牌堆继续抽取。
+                    int scheduled = _drawPile.IndexOf(_tutorialDrawOrder.Peek());
+                    if (scheduled >= 0)
+                    {
+                        index = scheduled;
+                        _tutorialDrawOrder.Dequeue();
+                    }
+                }
+                string id = _drawPile[index];
+                _drawPile.RemoveAt(index);
                 _hand.Add(id);
             }
         }

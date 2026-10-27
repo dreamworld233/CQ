@@ -24,19 +24,18 @@ public class BalanceTests
 
         var catalog = enemies.items.ToDictionary(e => e.id);
         var level = levels.items.First(l => l.id == id);
-        return BattleEngine.Create(seed, characters.items, level.waves[0], catalog, cards.items, formation.items[0]);
+        return BattleEngine.Create(seed, characters.items, level, catalog, cards.items, formation.items[0]);
     }
 
     [Test]
-    public void Level1_AutoBasic_IsWinnable()
+    public void Level1_Ignoring_Interrupt_Costs_A_Player()
     {
         var eng = BuildLevel(1, 7);
         eng.StartBattle();
-
-        for (int i = 0; i < 60 && !eng.IsFinished; i++) BattleTestDriver.CompleteRound(eng);
-
-        Assert.IsTrue(eng.IsFinished, "第 1 关应能在 60 回合内结束");
-        Assert.AreEqual(Team.Player, eng.Winner, "第 1 关纯普攻应可胜");
+        BattleTestDriver.CompleteRound(eng);
+        Assert.IsTrue(eng.Players.All(player => !player.IsDead));
+        BattleTestDriver.CompleteRound(eng);
+        Assert.IsTrue(eng.Players.Any(player => player.IsDead), "不打断第二轮高伤应付出阵亡代价");
     }
 
     [Test]
@@ -67,7 +66,7 @@ public class BalanceTests
 
         var lord = enemies.items.First(e => e.id == "lord");
         var charge = lord.intents.First(i => i.type == "charge");
-        Assert.IsTrue(charge.interruptible, "领主蓄力必须可被打断（第 2 关教学点）");
+        Assert.IsTrue(charge.interruptible, "领主蓄力必须可被打断");
     }
 
     [Test]

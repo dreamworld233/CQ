@@ -243,11 +243,12 @@ namespace CQ.Runtime
 
         private string CardTargetHint()
         {
-            if (SelectedCardIsSlotEffect()) return "点双方圆盘：任意格（含空格）";
+            string name = _engine.GetCard(_engine.Hand[_selectedCard]).name;
+            if (SelectedCardIsSlotEffect()) return name + "：点双方圆盘（含空格），或取消";
             var effect = _engine.GetCard(_engine.Hand[_selectedCard])?.effect;
-            return effect != null && (effect.type == "damage" || effect.type == "vulnerable" ||
+            return name + (effect != null && (effect.type == "damage" || effect.type == "vulnerable" ||
                 effect.type == "interrupt" || effect.type == "weaken" || effect.type == "slow")
-                ? "点青色圈存活敌人；取消不影响终结技" : "点青色圈存活我方；取消不影响终结技";
+                ? "：点圈中存活敌人，或取消" : "：点圈中存活我方，或取消");
         }
 
         /// <summary>取离点击点最近、且带 UnitView 的碰撞体。多个命中时按到点击点的距离决胜。</summary>
@@ -374,9 +375,15 @@ namespace CQ.Runtime
             var level = _levels[_levelIndex];
 
             var catalog = enemies.items.ToDictionary(e => e.id);
-            var wave = level.waves[0];
-            _engine = BattleEngine.Create(seed + _levelIndex, chars.items, wave.enemies, catalog, cards.items,
-                wave.slots, formation.items[0]);
+            string levelError = ConfigValidator.ValidateLevelReferences(level, chars.items, catalog,
+                cards.items.ToDictionary(card => card.id));
+            if (levelError != null)
+            {
+                Debug.LogError(levelError);
+                _ui.ShowError("关卡配置错误，查看 Console");
+                return;
+            }
+            _engine = BattleEngine.Create(seed + _levelIndex, chars.items, level, catalog, cards.items, formation.items[0]);
             RestoreFormation();
 
             SpawnWorld();
@@ -481,6 +488,7 @@ namespace CQ.Runtime
             if (_selectedCard >= 0 && (_engine == null || !_engine.CanPlayCards ||
                 _engine.Flow != _cardSelectionFlow || _selectedCard >= _engine.Hand.Count)) ClearCardSelection();
             _ui.RefreshHand(_engine, _selectedCard, _selectedCard >= 0 ? CardTargetHint() : "");
+            _ui.RefreshTutorial(_levels.Count > _levelIndex ? _levels[_levelIndex] : null, _engine);
             string order = "";
             string winner = "";
             if (_engine != null)
@@ -497,7 +505,7 @@ namespace CQ.Runtime
                     winner = _engine.Winner == Team.Player ? "我方胜利" : "我方失败";
             }
             bool hasNext = HasNextLevel();
-            _ui.Refresh(_engine != null ? _engine.Round : 1, order, winner, hasNext ? "下一关 → " + _levels[_levelIndex + 1].name : "", hasNext);
+            _ui.Refresh(_engine?.CurrentRound ?? 1, order, winner, hasNext ? "下一关 → " + _levels[_levelIndex + 1].name : "", hasNext);
             bool setup = _engine != null && _engine.Flow == BattleFlow.Setup;
             _ui.EndRoundButton.GetComponentInChildren<TMPro.TextMeshProUGUI>().text = setup ? "开战" : "开始行动";
             _ui.EndRoundButton.interactable = _engine != null && (setup || _engine.CanPlayCards);

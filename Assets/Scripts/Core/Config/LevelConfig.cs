@@ -8,6 +8,7 @@ namespace CQ.Core.Config
     {
         public string[] enemies;
         public string[] slots; // 与 enemies 平行，重复怪物各自指定占位
+        public int[] maxHp;
     }
 
     [Serializable]
@@ -15,6 +16,10 @@ namespace CQ.Core.Config
     {
         public int id;
         public string name;
+        public string[] players;
+        public string tutorialIntro;
+        public string[] tutorialHints;
+        public string[] tutorialDrawOrder;
         public List<WaveConfig> waves;
     }
 }

@@ -29,6 +29,7 @@ namespace CQ.Core.Battle
         public BattleFlow Flow { get; private set; } = BattleFlow.Setup;
 
         public int Round => _turns.Round;
+        public int CurrentRound { get; private set; } = 1;
         public BattlePhase Phase => _turns.Phase;
         public bool IsFinished => _turns.IsFinished;
         public Team? Winner => _turns.Winner;
@@ -84,7 +85,8 @@ namespace CQ.Core.Battle
             IReadOnlyDictionary<string, CharacterConfig> chars,
             IReadOnlyDictionary<string, EnemyConfig> enemyCfgs,
             IEnumerable<CardConfig> cards,
-            FormationConfig formationConfig = null)
+            FormationConfig formationConfig = null,
+            IEnumerable<string> tutorialDrawOrder = null)
         {
             Rng = rng;
             Players = players;
@@ -116,7 +118,7 @@ namespace CQ.Core.Battle
                 if (_enemyCfgs.TryGetValue(e.Id, out var cfg))
                     _intents[e.Id] = new IntentModel(cfg);
 
-            Deck = new Deck(rng, cardList.Select(c => (c.id, c.count)));
+            Deck = new Deck(rng, cardList.Select(c => (c.id, c.count)), tutorialDrawOrder);
             _turns = new TurnManager(rng, players, enemies, u => StatusResolver.EffectiveSpeedOfUnit(u, Ctx));
         }
 
@@ -128,7 +130,8 @@ namespace CQ.Core.Battle
             IReadOnlyDictionary<string, EnemyConfig> enemyCatalog,
             IEnumerable<CardConfig> cards,
             IReadOnlyList<string> enemySlots = null,
-            FormationConfig formationConfig = null)
+            FormationConfig formationConfig = null,
+            IEnumerable<string> tutorialDrawOrder = null)
         {
             if (waveEnemyIds == null) throw new ArgumentNullException(nameof(waveEnemyIds));
             if (waveEnemyIds.Count > Formation.Capacity) throw new ArgumentException("敌人超过五格容量", nameof(waveEnemyIds));
@@ -156,7 +159,7 @@ namespace CQ.Core.Battle
                 enemyByUnit[unitId] = cfg;
             }
 
-            return new BattleEngine(rng, players, enemies, charById, enemyByUnit, cards, formationConfig);
+            return new BattleEngine(rng, players, enemies, charById, enemyByUnit, cards, formationConfig, tutorialDrawOrder);
         }
 
         public static BattleEngine Create(
@@ -170,7 +173,34 @@ namespace CQ.Core.Battle
             if (wave == null) throw new ArgumentNullException(nameof(wave));
             var error = ConfigValidator.ValidateLevel(new LevelConfig { id = 1, waves = new List<WaveConfig> { wave } });
             if (error != null) throw new ArgumentException(error, nameof(wave));
-            return Create(seed, characters, wave.enemies, enemyCatalog, cards, wave.slots, formationConfig);
+            var engine = Create(seed, characters, wave.enemies, enemyCatalog, cards, wave.slots, formationConfig);
+            ApplyWaveHealth(engine, wave);
+            return engine;
+        }
+
+        public static BattleEngine Create(long seed, IEnumerable<CharacterConfig> characters, LevelConfig level,
+            IReadOnlyDictionary<string, EnemyConfig> enemyCatalog, IEnumerable<CardConfig> cards,
+            FormationConfig formationConfig = null)
+        {
+            var characterList = characters.ToList();
+            var cardList = cards.ToList();
+            string error = ConfigValidator.ValidateLevelReferences(level, characterList, enemyCatalog,
+                cardList.ToDictionary(card => card.id));
+            if (error != null) throw new ArgumentException(error, nameof(level));
+            var roster = level.players == null ? characterList :
+                level.players.Select(id => characterList.First(character => character.id == id)).ToList();
+            var wave = level.waves[0];
+            var engine = Create(seed, roster, wave.enemies, enemyCatalog, cardList, wave.slots,
+                formationConfig, level.tutorialDrawOrder);
+            ApplyWaveHealth(engine, wave);
+            return engine;
+        }
+
+        private static void ApplyWaveHealth(BattleEngine engine, WaveConfig wave)
+        {
+            if (wave.maxHp == null) return;
+            for (int i = 0; i < wave.maxHp.Length; i++)
+                engine.Enemies[i].Hp = engine.Enemies[i].MaxHp = wave.maxHp[i];
         }
 
         private static Unit BuildPlayer(CharacterConfig c) => new Unit(c.id, Team.Player)
@@ -375,6 +405,7 @@ namespace CQ.Core.Battle
                 SkippedRoundDraw = Hand.Count >= CQ.Core.Cards.Deck.MaxHandSize;
                 Deck.Draw(1);
                 Flow = BattleFlow.Input;
+                CurrentRound = _turns.Round + 1;
             }
             return null;
         }
