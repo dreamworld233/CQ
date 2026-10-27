@@ -41,6 +41,8 @@ namespace CQ.Runtime
         private Transform _slotRoot;
         private Camera _cam;
         private BattleUi _ui;
+        private BattleAudio _audio;
+        private bool _announcedWinner;
         private readonly Dictionary<string, string> _savedSlots = new Dictionary<string, string>();
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -56,6 +58,8 @@ namespace CQ.Runtime
         {
             Screen.orientation = ScreenOrientation.LandscapeLeft;
             _cam = EnsureCamera();
+            if (FindFirstObjectByType<AudioListener>() == null) _cam.gameObject.AddComponent<AudioListener>();
+            _audio = BattleAudio.Build(transform);
             BuildUi();
             NewBattle();
         }
@@ -97,6 +101,8 @@ namespace CQ.Runtime
         private void BuildUi()
         {
             _ui = BattleUi.Build(transform);
+            _ui.OnMuteChanged = muted => _audio.SetMuted(muted);
+            _ui.OnDrawCards = () => _audio.Play(BattleSound.Draw);
             _ui.OnEndRound = BeginActionsAction;
             _ui.OnRestart = () => NewBattle();
             _ui.OnNextLevel = NextLevelAction;
@@ -212,6 +218,7 @@ namespace CQ.Runtime
                 if (_engine.PlayGroupCard(index)) CardPlayed();
                 return;
             }
+            _audio.Play(BattleSound.Select);
             if (_selectedCard == index) ClearCardSelection();
             else
             {
@@ -293,6 +300,8 @@ namespace CQ.Runtime
             if (_engine == null || _selectedCard >= 0) return;
             ClearCardSelection();
             if (!_engine.RequestUltimate(actorId)) return;
+            _audio.Play(BattleSound.Select);
+            _ui.ShowFeedback(UnitName(actorId) + " 终结技已排队", new Color(1f, 0.85f, 0.3f));
             Log(UnitName(actorId) + " 终结技（已排队）");
             EnsureDriver();
             RefreshWorld();
@@ -327,6 +336,8 @@ namespace CQ.Runtime
         private void NewBattle()
         {
             StopDriver();
+            _audio?.StopPlayback();
+            _announcedWinner = false;
             ClearCardSelection();
             _ui.RefreshHand(null, -1, "");
             SaveFormation();
@@ -502,7 +513,16 @@ namespace CQ.Runtime
                         return tag;
                     }));
                 if (_engine.IsFinished && !_engine.IsActionOccupied)
-                    winner = _engine.Winner == Team.Player ? "我方胜利" : "我方失败";
+                {
+                    bool won = _engine.Winner == Team.Player;
+                    winner = won ? "我方胜利" : "我方失败";
+                    if (!_announcedWinner)
+                    {
+                        _announcedWinner = true;
+                        _audio.Play(won ? BattleSound.Victory : BattleSound.Defeat);
+                        _ui.ShowFeedback(winner, won ? new Color(1f, 0.85f, 0.3f) : Color.red);
+                    }
+                }
             }
             bool hasNext = HasNextLevel();
             _ui.Refresh(_engine?.CurrentRound ?? 1, order, winner, hasNext ? "下一关 → " + _levels[_levelIndex + 1].name : "", hasNext);
@@ -520,6 +540,7 @@ namespace CQ.Runtime
             ClearCardSelection();
             if (_engine.Flow == BattleFlow.Setup)
             {
+                _audio.Play(BattleSound.Select);
                 SaveFormation();
                 _selectedActor = null;
                 _engine.StartBattle();
@@ -530,6 +551,7 @@ namespace CQ.Runtime
                 return;
             }
             if (!_engine.BeginActions()) return;
+            _audio.Play(BattleSound.Select);
             RefreshHud();
             EnsureDriver();
         }
@@ -575,16 +597,23 @@ namespace CQ.Runtime
         private void ConsumeAction(ActionResult result)
         {
             if (result.Sequence <= _logCursor) return;
+            var sound = BattleAudio.SoundFor(result);
+            if (sound.HasValue) _audio.Play(sound.Value);
             bool any = result.InjectedCardIds.Count > 0 || result.RemovedCardId != null;
             if (result.InjectedCardIds.Count > 0)
             {
                 string cards = string.Join("、", result.InjectedCardIds.GroupBy(id => id)
                     .Select(group => (_engine.GetCard(group.Key)?.name ?? group.Key) + "×" + group.Count()));
                 PushLog(UnitName(result.ActorId) + " 终结技 → 注入抽牌堆：" + cards + "（后续抽取）");
+                _ui.ShowFeedback("注入抽牌堆：" + cards, Color.cyan);
                 if (_views.TryGetValue(result.ActorId, out var caster)) caster.FloatText("注牌 " + cards, Color.cyan);
             }
             if (result.RemovedCardId != null)
-                PushLog("卡〔" + (_engine.GetCard(result.RemovedCardId)?.name ?? result.RemovedCardId) + "〕 → 移出本场，不回洗");
+            {
+                string name = _engine.GetCard(result.RemovedCardId).name;
+                PushLog("卡〔" + name + "〕 → 移出本场，不回洗");
+                _ui.ShowFeedback(name + " 已移出本场", new Color(0.8f, 0.7f, 1f));
+            }
             if (result.Kind == BattleEventKind.Card && result.RemovedCardId == null)
             {
                 any = true;
@@ -594,6 +623,8 @@ namespace CQ.Runtime
                     : result.TargetTeam.HasValue ? "全体敌人" : UnitName(result.TargetUnitId);
                 var card = _engine.GetCard(result.ActionId);
                 PushLog("卡〔" + (card != null ? card.name : result.ActionId) + "〕 → " + target);
+                _ui.ShowFeedback((card != null ? card.name : result.ActionId) + " → " + target,
+                    card?.effect.type == "heal" ? Color.green : new Color(1f, 0.85f, 0.3f));
             }
             foreach (var change in result.UnitChanges)
             {

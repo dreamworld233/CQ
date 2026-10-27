@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using CQ.Core.Battle;
 using CQ.Core.Combat;
 using CQ.Core.Config;
@@ -63,6 +64,14 @@ namespace CQ.Runtime
         private GameObject _tutorialPanel;
         private TextMeshProUGUI _tutorialTitle;
         private TextMeshProUGUI _tutorialHint;
+        private TextMeshProUGUI _muteLabel;
+        private TextMeshProUGUI _feedback;
+        private float _feedbackTime;
+        private int _lastHandCount;
+        private readonly List<float> _handPulse = new List<float>();
+        public bool Muted { get; private set; }
+        public Action<bool> OnMuteChanged;
+        public Action OnDrawCards;
 
         // LateUpdate must use the same input gate as the controller, not overwrite it with readiness.
         public void SetCardTargeting(bool targeting)
@@ -101,6 +110,18 @@ namespace CQ.Runtime
 
         private void LateUpdate()
         {
+            if (_feedbackTime > 0f)
+            {
+                _feedbackTime = Mathf.Max(0f, _feedbackTime - Time.unscaledDeltaTime);
+                _feedback.alpha = Mathf.Clamp01(_feedbackTime / 0.25f);
+            }
+            for (int i = 0; i < _handPulse.Count; i++)
+            {
+                if (_handPulse[i] <= 0f) continue;
+                _handPulse[i] = Mathf.Max(0f, _handPulse[i] - Time.unscaledDeltaTime);
+                float scale = 1f + 0.05f * Mathf.Sin(Mathf.PI * _handPulse[i] / 0.25f);
+                _handButtons[i].transform.localScale = Vector3.one * scale;
+            }
             foreach (var binding in _ultimates)
             {
                 if (binding.Anchor == null || binding.Camera == null) continue;
@@ -264,6 +285,19 @@ namespace CQ.Runtime
             RestartButton = UiKit.MakeButton(CanvasRect, "重开", 36, ButtonBg);
             Rect((RectTransform)RestartButton.transform, 1f, 0f, 1f, 0f, new Vector2(-356f, 46f), new Vector2(180f, 90f));
             RestartButton.onClick.AddListener(() => OnRestart?.Invoke());
+
+            var mute = UiKit.MakeButton(CanvasRect, "音效：开", 22, ButtonBg);
+            mute.name = "MuteButton";
+            Rect((RectTransform)mute.transform, 1f, 0f, 1f, 0f, new Vector2(-36f, 236f), new Vector2(180f, 44f));
+            _muteLabel = mute.GetComponentInChildren<TextMeshProUGUI>();
+            mute.onClick.AddListener(() => SetMuted(!Muted));
+            _feedback = UiKit.MakeText(CanvasRect, "", 30, Color.white, TextAnchor.MiddleRight, true);
+            _feedback.name = "FeedbackText";
+            Rect((RectTransform)_feedback.transform, 1f, 0f, 1f, 0f, new Vector2(-36f, 290f), new Vector2(740f, 54f));
+            _feedback.enableWordWrapping = true;
+            _feedback.enableAutoSizing = true;
+            _feedback.fontSizeMin = 20f;
+            _feedback.fontSizeMax = 30f;
 
             // 下一关：胜利时显示（屏幕中上）
             NextLevelButton = UiKit.MakeButton(CanvasRect, "", 38, ButtonBg);
@@ -455,9 +489,34 @@ namespace CQ.Runtime
             text.Append('\n');
         }
 
+        public void SetMuted(bool muted)
+        {
+            Muted = muted;
+            _muteLabel.text = muted ? "音效：关" : "音效：开";
+            OnMuteChanged?.Invoke(muted);
+        }
+
+        public void ShowFeedback(string text, Color color)
+        {
+            _feedback.text = text;
+            _feedback.color = color;
+            _feedbackTime = 1.1f;
+        }
+
         public void RefreshHand(BattleEngine engine, int selectedIndex, string targetHint)
         {
-            if (!ReferenceEquals(_handEngine, engine)) ClosePilePanel();
+            if (!ReferenceEquals(_handEngine, engine))
+            {
+                ClosePilePanel();
+                _lastHandCount = 0;
+                _feedback.text = "";
+                _feedbackTime = 0f;
+                for (int i = 0; i < _handPulse.Count; i++)
+                {
+                    _handPulse[i] = 0f;
+                    _handButtons[i].transform.localScale = Vector3.one;
+                }
+            }
             _handEngine = engine;
             _pileButton.interactable = engine != null;
             _pileButton.GetComponentInChildren<TextMeshProUGUI>().text = engine == null ? "查看牌堆" :
@@ -481,7 +540,16 @@ namespace CQ.Runtime
                 labelRt.offsetMax = new Vector2(-8f, -6f);
                 button.onClick.AddListener(() => OnSelectCard?.Invoke(index));
                 _handButtons.Add(button);
+                _handPulse.Add(0f);
             }
+            if (count > _lastHandCount)
+            {
+                for (int i = _lastHandCount; i < count; i++) _handPulse[i] = 0.25f;
+                ShowFeedback("抽到：" + string.Join("、", engine.Hand.Skip(_lastHandCount)
+                    .Select(id => engine.GetCard(id).name)), Color.cyan);
+                OnDrawCards?.Invoke();
+            }
+            _lastHandCount = count;
             for (int i = 0; i < _handButtons.Count; i++)
             {
                 var button = _handButtons[i];
