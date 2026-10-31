@@ -1,31 +1,28 @@
 {
   "id": "sword",
   "name": "剑士",
-  "role": "dps",
-  "maxHp": 100,
+  "maxHp": 380,
+  "baseAttack": 48,
+  "baseDefense": 14,
   "baseSpeed": 10,
-  "maxUlt": 3,
   "defaultSlot": "front1",
+  "initialEnergy": 20,
+  "maxEnergy": 100,
+  "actionEnergy": 40,
+  "hitEnergy": 10,
+  "specialInterval": 2,
   "skills": [
-    {
-      "id": "sword_basic",
-      "name": "普攻",
-      "type": "basic",
-      "damage": {
-        "kind": "physical",
-        "target": "single",
-        "amount": 12
-      }
-    },
-    {
-      "id": "sword_ult",
-      "name": "疾风斩",
-      "type": "ult",
-      "injectCards": [
-        { "cardId": "gale_slash", "count": 1 }
-      ]
-    }
-  ],
-  "ultChargeTrigger": "attack",
-  "ultChargeAmount": 1
+    { "id": "sword_basic", "name": "普攻", "type": "basic", "effects": [
+      { "type": "damage", "target": "enemyFront", "count": 1, "multiplierPercent": 100, "hits": 1 }
+    ] },
+    { "id": "sword_special", "name": "连斩", "type": "special", "effects": [
+      { "type": "damage", "target": "enemyFront", "count": 1, "multiplierPercent": 90, "hits": 2 }
+    ] },
+    { "id": "sword_ult", "name": "疾风斩", "type": "ult", "effects": [
+      { "type": "damage", "target": "enemyBack", "count": 1, "multiplierPercent": 300, "hits": 1 }
+    ] },
+    { "id": "sword_passive", "name": "战意", "type": "passive", "trigger": "permanent", "effects": [
+      { "type": "attackUp", "target": "self", "count": 1, "percent": 10 }
+    ] }
+  ]
 }

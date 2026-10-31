@@ -1,12 +1,28 @@
 {
   "id": "lord",
   "name": "领主",
-  "maxHp": 200,
+  "maxHp": 900,
+  "baseAttack": 55,
+  "baseDefense": 18,
   "baseSpeed": 5,
-  "intentSequence": ["basic", "aoe", "charge"],
-  "intents": [
-    { "id": "basic", "type": "attack", "target": "single", "damage": 22 },
-    { "id": "aoe", "type": "attack", "target": "all", "damage": 12 },
-    { "id": "charge", "type": "charge", "nextDamage": 50, "interruptible": true }
+  "defaultSlot": "back1",
+  "initialEnergy": 20,
+  "maxEnergy": 100,
+  "actionEnergy": 40,
+  "hitEnergy": 10,
+  "specialInterval": 2,
+  "skills": [
+    { "id": "lord_basic", "name": "劈砍", "type": "basic", "effects": [
+      { "type": "damage", "target": "enemyFront", "count": 1, "multiplierPercent": 100, "hits": 1 }
+    ] },
+    { "id": "lord_special", "name": "横扫", "type": "special", "effects": [
+      { "type": "damage", "target": "enemyAll", "count": 1, "multiplierPercent": 90, "hits": 1 }
+    ] },
+    { "id": "lord_ult", "name": "震地", "type": "ult", "effects": [
+      { "type": "damage", "target": "enemyAll", "count": 1, "multiplierPercent": 150, "hits": 1 }
+    ] },
+    { "id": "lord_passive", "name": "威势", "type": "passive", "trigger": "roundStart", "effects": [
+      { "type": "defenseUp", "target": "self", "count": 1, "percent": 10, "duration": 1 }
+    ] }
   ]
 }

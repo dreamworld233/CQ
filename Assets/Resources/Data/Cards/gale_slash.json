@@ -1,1 +1,0 @@
-{ "id": "gale_slash", "name": "疾风斩", "effect": { "type": "damage", "target": "single", "amount": 40 }, "count": 0 }

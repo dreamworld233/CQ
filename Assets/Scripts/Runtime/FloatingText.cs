@@ -9,7 +9,7 @@ namespace CQ.Runtime
     /// </summary>
     public sealed class FloatingText : MonoBehaviour
     {
-        private const float Life = 1.4f;          // 存活时长
+        private const float Life = 0.8f;
         private const float RiseSpeed = 1.25f;    // 上浮速度（世界单位/秒）
         private const float PopDur = 0.16f;       // 弹入时长
         private const float PopFrom = 0.6f;       // 弹入起始缩放
@@ -21,6 +21,7 @@ namespace CQ.Runtime
         private TextMeshPro _tmp;
         private Vector3 _baseScale = Vector3.one;
         private float _age;
+        private UnitView _view;
 
         public static void Spawn(Transform parent, string text, Color color, float localY, float magnitude = 0f)
         {
@@ -33,15 +34,17 @@ namespace CQ.Runtime
 
             var ft = tmp.gameObject.AddComponent<FloatingText>();
             ft._tmp = tmp;
+            ft._view = parent.GetComponent<UnitView>();
             ft._baseScale = tmp.transform.localScale;
             tmp.transform.localScale = ft._baseScale * PopFrom;
         }
 
         private void Update()
         {
-            _age += Time.deltaTime;
+            float dt = Time.deltaTime * (_view != null ? _view.PlaybackSpeed : 1f);
+            _age += dt;
 
-            transform.localPosition += Vector3.up * (RiseSpeed * Time.deltaTime);
+            transform.localPosition += Vector3.up * (RiseSpeed * dt);
 
             float pop = _age <= PopDur
                 ? Mathf.Lerp(PopFrom, PopPeak, _age / PopDur)

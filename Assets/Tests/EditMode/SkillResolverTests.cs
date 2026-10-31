@@ -1,339 +1,136 @@
-using System;
-using System.Collections.Generic;
 using System.Linq;
-using NUnit.Framework;
-using CQ.Core.Cards;
 using CQ.Core.Battle;
 using CQ.Core.Combat;
-using CQ.Core.Config;
-using CQ.Core.Status;
-using CQ.Runtime;
+using NUnit.Framework;
 
 public class SkillResolverTests
 {
-    private static Unit U(string id, Team team, string slot = "front1", string trigger = "attack", int hp = 100) =>
-        new Unit(id, team) { SlotId = slot, Hp = hp, MaxHp = hp, MaxUlt = 3,
-            UltChargeTrigger = trigger, UltChargeAmount = 1 };
-    private static CombatContext Ctx(params Unit[] units) => new CombatContext(new Rng(1), units,
-        new FormationConfig { frontBaseTaunt = 100, backBaseTaunt = 50 });
-    private static SkillSpec Attack(string type = "basic", string target = "single", int amount = 12) =>
-        new SkillSpec { id = type, type = type, damage = new DamageSpec { kind = "physical", target = target, amount = amount } };
-    private static SkillSpec Inject(int count = 1) => new SkillSpec { id = "inject", type = "ult",
-        injectCards = new List<CardInjectionSpec> { new CardInjectionSpec { cardId = "test", count = count } } };
-    private static ActionResult Cast(CombatContext ctx, Unit actor, SkillSpec skill) =>
-        SkillResolver.Resolve(skill, ctx, actor, new Deck(ctx.Rng, new (string, int)[0]));
-
-    private static ActionResult HealCard(CombatContext ctx, Unit target, int amount = 20)
-    {
-        ctx.BeginAction(BattleEventKind.Card, null, "heal", false);
-        CardEffectResolver.Resolve(new CardEffectSpec { type = "heal", target = "single", amount = amount }, ctx, target.Id, "player");
-        return ctx.CompleteAction(targetUnitId: target.Id);
-    }
-
-    [TestCase(12, "physical")]
-    [TestCase(8, "physical")]
-    [TestCase(10, "magic")]
-    public void Basic_Deals_Configured_Damage_And_Charges_Once(int damage, string kind)
-    {
-        var actor = U("actor", Team.Player);
-        var enemy = U("enemy", Team.Enemy);
-        var ctx = Ctx(actor, enemy);
-        var skill = Attack(amount: damage); skill.damage.kind = kind;
-        var result = Cast(ctx, actor, skill);
-        Assert.AreEqual(100 - damage, enemy.Hp);
-        Assert.AreEqual(1, actor.Ult);
-        Assert.AreEqual(1, result.Charges.Count);
-        Assert.AreEqual(1, result.Hits.Count);
-        Assert.AreEqual(1, result.UnitChanges.Single(c => c.UnitId == actor.Id).After.Ult);
-    }
-
     [Test]
-    public void Charge_Clamps_And_No_Hit_Does_Not_Charge()
+    public void MultiHitChargesActorAndTargetOnce_PerCompleteAttack()
     {
-        var actor = U("actor", Team.Player); actor.Ult = 2; actor.UltChargeAmount = 9;
-        var enemy = U("enemy", Team.Enemy);
-        var ctx = Ctx(actor, enemy);
-        var result = Cast(ctx, actor, Attack());
-        Assert.AreEqual(3, actor.Ult);
-        Assert.AreEqual(1, result.Charges.Single().Amount);
-        actor.Ult = 0; enemy.Hp = 0;
-        Assert.IsNull(Cast(ctx, actor, Attack()));
-        Assert.AreEqual(0, actor.Ult);
-        Assert.AreEqual(1, ctx.ActionResults.Count);
-    }
-
-    [Test]
-    public void Shield_Fully_Absorbs_Still_Charges_And_Records_Fact()
-    {
-        var actor = U("actor", Team.Player);
-        var enemy = U("enemy", Team.Enemy, trigger: "hit");
-        var ctx = Ctx(actor, enemy);
-        ctx.AddStatus(enemy.Id, new StatusEffect { Type = StatusType.Shield, Amount = 50 });
-        var result = Cast(ctx, actor, Attack());
-        Assert.AreEqual(100, enemy.Hp);
-        Assert.AreEqual(1, enemy.Ult);
-        Assert.AreEqual(1, actor.Ult);
-        Assert.AreEqual(0, result.Hits.Single().HpDamage);
-        Assert.AreEqual(12, result.Hits.Single().ShieldAbsorbed);
-    }
-
-    [Test]
-    public void Aoe_Attacker_Once_Each_Surviving_Target_Once_Dead_Not_Charged()
-    {
-        var actor = U("actor", Team.Player);
-        var a = U("a", Team.Enemy, trigger: "hit");
-        var b = U("b", Team.Enemy, "front2", "hit");
-        var dead = U("dead", Team.Enemy, "back1", "hit"); dead.Hp = 0;
-        var killed = U("killed", Team.Enemy, "back2", "hit", 5);
-        var result = Cast(Ctx(actor, a, b, dead, killed), actor, Attack(target: "all"));
-        Assert.AreEqual(1, actor.Ult);
-        Assert.AreEqual(1, a.Ult); Assert.AreEqual(1, b.Ult);
-        Assert.AreEqual(0, dead.Ult); Assert.AreEqual(0, killed.Ult);
+        var hero = AutoBattleTestData.Hero(attack: 10);
+        AutoBattleTestData.SetSkill(hero, AutoBattleTestData.Skill("basic", AutoBattleTestData.Effect(hits: 3)));
+        var engine = AutoBattleTestData.Engine(heroes: new[] { hero });
+        engine.StartBattle();
+        var result = BattleTestDriver.NextAction(engine, "hero");
         Assert.AreEqual(3, result.Hits.Count);
-        Assert.AreEqual(5, result.Hits.Single(h => h.TargetUnitId == killed.Id).HpDamage);
-    }
-
-    [TestCase(1)]
-    [TestCase(2)]
-    public void Ultimate_Consumes_Full_Charge_And_Only_Injects_Cards(int count)
-    {
-        var actor = U("actor", Team.Player); actor.Ult = 3;
-        var a = U("a", Team.Enemy, trigger: "hit");
-        var b = U("b", Team.Enemy, "back1", "hit");
-        var result = Cast(Ctx(actor, a, b), actor, Inject(count));
-        Assert.AreEqual(0, actor.Ult);
-        Assert.AreEqual(100, a.Hp); Assert.AreEqual(100, b.Hp);
-        Assert.AreEqual(0, a.Ult); Assert.AreEqual(0, b.Ult);
-        Assert.IsEmpty(result.Hits); Assert.IsEmpty(result.Charges);
-        Assert.AreEqual(count, result.InjectedCardIds.Count);
-        Assert.Throws<NotSupportedException>(() => ((IList<string>)result.InjectedCardIds).Clear());
+        Assert.AreEqual(30, result.Hits.Sum(h => h.HpDamage));
+        Assert.AreEqual(60, engine.Players[0].Ult);
+        Assert.AreEqual(30, engine.Enemies[0].Ult);
+        Assert.AreEqual(1, result.HitTargetIds.Count);
+        Assert.AreEqual(1, result.Charges.Count(c => c.UnitId == "hero"));
+        Assert.AreEqual(1, result.Charges.Count(c => c.UnitId == engine.Enemies[0].Id));
     }
 
     [Test]
-    public void Ultimate_Not_Full_Does_Nothing()
+    public void GroupAttackChargesEachLivingHitTargetOnce_AndDoesNotHitDeadTargets()
     {
-        var actor = U("actor", Team.Player); actor.Ult = 2;
-        var enemy = U("enemy", Team.Enemy);
-        var ctx = Ctx(actor, enemy);
-        Assert.IsNull(Cast(ctx, actor, Inject()));
-        Assert.AreEqual(2, actor.Ult); Assert.AreEqual(100, enemy.Hp);
-        Assert.IsEmpty(ctx.ActionResults);
-    }
-
-    [Test]
-    public void Single_Uses_Taunt_And_Removed_Snipe_Is_Rejected()
-    {
-        var actor = U("actor", Team.Player);
-        var front = U("front", Team.Enemy);
-        var back = U("back", Team.Enemy, "back1");
-        var ctx = Ctx(actor, front, back);
-        Cast(ctx, actor, Attack());
-        Assert.AreEqual(88, front.Hp); Assert.AreEqual(100, back.Hp);
-        actor.Ult = 3;
-        Assert.IsNull(Cast(ctx, actor, Attack("ult", "snipe")));
-        Assert.AreEqual(3, actor.Ult); Assert.AreEqual(1, ctx.ActionResults.Count);
-    }
-
-    [TestCase("self")]
-    [TestCase("ally")]
-    [TestCase("dead")]
-    public void Heal_Card_Heals_Chosen_Living_Ally_Clamps_And_Never_Revives(string target)
-    {
-        var actor = U("actor", Team.Player); actor.Hp = 80; actor.Ult = 3;
-        var ally = U("ally", Team.Player, "front2"); ally.Hp = 90;
-        var dead = U("dead", Team.Player, "back1"); dead.Hp = 0;
-        var enemy = U("enemy", Team.Enemy);
-        var result = HealCard(Ctx(actor, ally, dead, enemy), target == "self" ? actor : target == "ally" ? ally : dead);
-        Assert.AreEqual(target == "self" ? 100 : 80, actor.Hp);
-        Assert.AreEqual(target == "ally" ? 100 : 90, ally.Hp);
-        Assert.AreEqual(0, dead.Hp); Assert.AreEqual(3, actor.Ult);
-        Assert.IsEmpty(result.Hits); Assert.IsEmpty(result.Charges);
-    }
-
-    [Test]
-    public void Multi_Hits_Deduplicate_Charge_And_Stop_Hitting_Dead_Target()
-    {
-        var actor = U("enemy", Team.Enemy);
-        var target = U("target", Team.Player, trigger: "hit");
-        var ctx = Ctx(actor, target);
-        var resolver = new EnemyActionResolver();
-        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "multi", hits = 3, damage = 10 });
-        Assert.AreEqual(70, target.Hp); Assert.AreEqual(1, target.Ult); Assert.AreEqual(1, actor.Ult);
-        Assert.AreEqual(3, ctx.ActionResults.Single().Hits.Count);
-        target.Hp = 5;
-        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "multi", hits = 3, damage = 10 });
-        Assert.AreEqual(1, ctx.ActionResults.Last().Hits.Count);
-        Assert.AreEqual(5, ctx.ActionResults.Last().Hits.Single().HpDamage);
-        Assert.AreEqual(1, target.Ult, "死亡不再充能");
-    }
-
-    [Test]
-    public void Pending_Release_And_Intent_Are_One_Action_One_Charge()
-    {
-        var actor = U("enemy", Team.Enemy);
-        var target = U("target", Team.Player, trigger: "hit");
-        var ctx = Ctx(actor, target);
-        var resolver = new EnemyActionResolver();
-        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "charge", nextDamage = 20 });
-        Assert.AreEqual(0, actor.Ult); Assert.AreEqual(0, target.Ult);
-        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "attack", damage = 10 });
-        Assert.AreEqual(70, target.Hp); Assert.AreEqual(1, actor.Ult); Assert.AreEqual(1, target.Ult);
-        Assert.AreEqual(2, ctx.ActionResults.Count);
-        Assert.AreEqual(2, ctx.ActionResults.Last().Hits.Count);
-        Assert.AreEqual(1, ctx.ActionResults.Last().HitTargetIds.Count);
-    }
-
-    [Test]
-    public void Lethal_Pending_Release_Does_Not_Execute_Followup_Buff()
-    {
-        var actor = U("enemy", Team.Enemy);
-        var target = U("target", Team.Player, trigger: "hit");
-        var ctx = Ctx(actor, target);
-        var resolver = new EnemyActionResolver();
-        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "charge", nextDamage = 500 });
-        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "attackUp", buffPercent = 50 });
-        Assert.IsTrue(target.IsDead); Assert.IsFalse(ctx.HasStatus(actor.Id, StatusType.AttackUp));
-        Assert.AreEqual(0, target.Ult);
-    }
-
-    [Test]
-    public void Pure_Debuff_Charge_Preparation_And_RoundEnd_Do_Not_Charge()
-    {
-        var actor = U("enemy", Team.Enemy);
-        var target = U("target", Team.Player, trigger: "hit");
-        var ctx = Ctx(actor, target);
-        var resolver = new EnemyActionResolver();
-        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "debuff", debuffType = "weaken", debuffPercent = 25 });
-        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "charge", nextDamage = 20 });
-        StatusResolver.RoundEndTick(ctx);
-        Assert.AreEqual(0, actor.Ult); Assert.AreEqual(0, target.Ult);
-        Assert.IsTrue(ctx.ActionResults.All(r => r.Hits.Count == 0 && r.Charges.Count == 0));
-    }
-
-    [Test]
-    public void Result_Is_Immutable_And_Snapshot_Does_Not_Follow_Later_Mutations()
-    {
-        var actor = U("actor", Team.Player);
-        var target = U("target", Team.Enemy, trigger: "hit");
-        var ctx = Ctx(actor, target);
-        ctx.AddStatus(target.Id, new StatusEffect { Type = StatusType.Shield, Amount = 50, Duration = 2 });
-        var result = Cast(ctx, actor, Attack());
-        var after = result.UnitChanges.Single(c => c.UnitId == target.Id).After;
-        target.Hp = 1; target.Ult = 3;
-        ctx.FindStatus(target.Id, StatusType.Shield).Amount = 0;
-        Assert.AreEqual(100, after.Hp); Assert.AreEqual(1, after.Ult);
-        Assert.AreEqual(38, after.Statuses.Single().Amount);
-        Assert.Throws<NotSupportedException>(() => ((IList<AttackHit>)result.Hits).Clear());
-        Assert.Throws<NotSupportedException>(() => ((IList<UnitChange>)result.UnitChanges).Clear());
-        Assert.Throws<NotSupportedException>(() => ((IList<UltCharge>)result.Charges).Clear());
-        Assert.Throws<NotSupportedException>(() => ((IList<StatusSnapshot>)after.Statuses).Clear());
-        Assert.Throws<NotSupportedException>(() => ((IList<string>)result.HitTargetIds).Clear());
-    }
-
-    [Test]
-    public void Hit_Config_Does_Not_Charge_From_Its_Own_Basic_Or_RoundEnd()
-    {
-        var guard = U("guard", Team.Player, trigger: "hit");
-        var enemy = U("enemy", Team.Enemy);
-        var ctx = Ctx(guard, enemy);
-        Cast(ctx, guard, Attack());
-        StatusResolver.RoundEndTick(ctx);
-        Assert.AreEqual(0, guard.Ult);
-    }
-
-    [Test]
-    public void Card_Action_Damage_Does_Not_Grant_Attack_Charge()
-    {
-        var actor = U("actor", Team.Player);
-        var target = U("target", Team.Enemy, trigger: "hit");
-        var ctx = Ctx(actor, target);
-        ctx.BeginAction(BattleEventKind.Card, actor, "damageCard", false);
-        Damage.Apply(ctx, new DamageRequest { SourceUnitId = actor.Id, TargetUnitId = target.Id, Amount = 5 });
-        var result = ctx.CompleteAction();
-        Assert.AreEqual(0, actor.Ult);
-        Assert.AreEqual(1, target.Ult);
-        Assert.AreEqual(1, result.Hits.Count);
-    }
-
-    [Test]
-    public void Skipped_Noninterruptible_Pending_Release_Is_One_Action()
-    {
-        var actor = U("enemy", Team.Enemy);
-        var target = U("target", Team.Player, trigger: "hit");
-        var ctx = Ctx(actor, target);
-        var resolver = new EnemyActionResolver();
-        resolver.Resolve(ctx, actor.Id, new IntentConfig { type = "charge", nextDamage = 15, interruptible = false });
-        ctx.AddStatus(actor.Id, new StatusEffect { Type = StatusType.Interrupt, Duration = 1 });
-        resolver.ResolveSkipped(ctx, actor.Id);
-        Assert.AreEqual(85, target.Hp);
-        Assert.AreEqual(1, actor.Ult); Assert.AreEqual(1, target.Ult);
-        Assert.AreEqual(2, ctx.ActionResults.Count);
-        Assert.AreEqual(1, ctx.ActionResults.Last().Hits.Count);
-    }
-
-    [Test]
-    public void Nested_Action_Is_Rejected_Not_Double_Charged()
-    {
-        var actor = U("actor", Team.Player); var enemy = U("enemy", Team.Enemy);
-        var ctx = Ctx(actor, enemy);
-        ctx.BeginAction(BattleEventKind.Card, null, "card", false);
-        Assert.Throws<InvalidOperationException>(() => Cast(ctx, actor, Attack()));
-        var result = ctx.CompleteAction();
-        Assert.IsEmpty(result.Charges); Assert.AreEqual(1, ctx.ActionResults.Count);
-    }
-
-    [Test]
-    public void Resources_Characters_All_Current_Skills_Resolve()
-    {
-        var configs = ConfigLoader.LoadCharacters();
-        Assert.IsEmpty(configs.errors); Assert.AreEqual(3, configs.items.Count);
-        foreach (var cfg in configs.items)
+        var hero = AutoBattleTestData.Hero();
+        AutoBattleTestData.SetSkill(hero, AutoBattleTestData.Skill("basic",
+            AutoBattleTestData.Effect(target: "enemyAll", count: 1, hits: 3)));
+        var engine = AutoBattleTestData.Engine(heroes: new[] { hero }, enemies: new[]
         {
-            Assert.AreEqual(2, cfg.skills.Count);
-            foreach (var skill in cfg.skills)
-            {
-                var unit = U(cfg.id, Team.Player, trigger: cfg.ultChargeTrigger, hp: cfg.maxHp);
-                unit.MaxUlt = cfg.maxUlt; unit.UltChargeAmount = cfg.ultChargeAmount;
-                if (skill.type == "ult") unit.Ult = cfg.maxUlt;
-                var a = U("a", Team.Enemy); var b = U("b", Team.Enemy, "back1");
-                Assert.IsNotNull(Cast(Ctx(unit, a, b), unit, skill), cfg.id + "/" + skill.id);
-            }
-        }
-    }
-    [Test]
-    public void Heal_Card_Does_Not_Retarget_To_Lower_Percentage_Ally()
-    {
-        var actor = U("actor", Team.Player); actor.Ult = 3; actor.Hp = 90;
-        var small = U("small", Team.Player, "front2", hp: 40); small.Hp = 20;
-        var large = U("large", Team.Player, "back1", hp: 200); large.Hp = 40;
-        var dead = U("dead", Team.Player, "back2"); dead.Hp = 0;
-        var enemy = U("enemy", Team.Enemy); enemy.Hp = 1;
-        HealCard(Ctx(actor, small, large, dead, enemy), small);
-        Assert.AreEqual(40, large.Hp); Assert.AreEqual(40, small.Hp);
-        Assert.AreEqual(90, actor.Hp); Assert.AreEqual(0, dead.Hp); Assert.AreEqual(1, enemy.Hp);
-    }
-
-    [TestCase(false)]
-    [TestCase(true)]
-    public void Heal_Card_Selection_Ignores_Registration_Order_And_Does_Not_Consume_Rng(bool selfFirst)
-    {
-        var actor = U("actor", Team.Player); actor.Ult = 3; actor.Hp = 50;
-        var ally = U("ally", Team.Player, "back1", hp: 200); ally.Hp = 100;
-        var enemy = U("enemy", Team.Enemy);
-        var ctx = selfFirst ? Ctx(actor, ally, enemy) : Ctx(ally, actor, enemy);
-        HealCard(ctx, ally);
-        Assert.AreEqual(50, actor.Hp);
-        Assert.AreEqual(120, ally.Hp);
-        Assert.AreEqual(new Rng(1).NextInt(0, 100000), ctx.Rng.NextInt(0, 100000));
+            AutoBattleTestData.Enemy("a", "front1"), AutoBattleTestData.Enemy("b", "front2"),
+            AutoBattleTestData.Enemy("dead", "back1")
+        });
+        engine.Enemies[2].TakeDamage(engine.Enemies[2].Hp);
+        engine.StartBattle();
+        var result = BattleTestDriver.NextAction(engine, "hero");
+        Assert.AreEqual(6, result.Hits.Count);
+        Assert.AreEqual(2, result.HitTargetIds.Count);
+        Assert.AreEqual(60, engine.Players[0].Ult);
+        Assert.AreEqual(30, engine.Enemies[0].Ult);
+        Assert.AreEqual(30, engine.Enemies[1].Ult);
+        Assert.AreEqual(20, engine.Enemies[2].Ult);
+        Assert.IsFalse(result.Hits.Any(h => h.TargetUnitId == engine.Enemies[2].Id));
     }
 
     [Test]
-    public void Heal_Card_Large_Hp_Remains_Exact()
+    public void MultiHitStopsOnTargetDeath_AndDoesNotRetargetRemainingHits()
     {
-        var actor = U("actor", Team.Player, hp: 2000000000); actor.Hp = 1500000000; actor.Ult = 3;
-        var ally = U("ally", Team.Player, "back1", hp: 1800000000); ally.Hp = 1200000000;
-        HealCard(Ctx(actor, ally), ally);
-        Assert.AreEqual(1200000020, ally.Hp); Assert.AreEqual(1500000000, actor.Hp);
+        var hero = AutoBattleTestData.Hero(attack: 10);
+        AutoBattleTestData.SetSkill(hero, AutoBattleTestData.Skill("basic", AutoBattleTestData.Effect(hits: 3)));
+        var engine = AutoBattleTestData.Engine(heroes: new[] { hero }, enemies: new[]
+        {
+            AutoBattleTestData.Enemy("fragile", "front1", hp: 5), AutoBattleTestData.Enemy("back", "back1")
+        });
+        engine.StartBattle();
+        var result = BattleTestDriver.NextAction(engine, "hero");
+        Assert.AreEqual(1, result.Hits.Count);
+        Assert.AreEqual(5, result.Hits.Single().HpDamage);
+        Assert.IsTrue(result.Hits.Single().TargetDead);
+        Assert.AreEqual(engine.Enemies[1].MaxHp, engine.Enemies[1].Hp);
+        Assert.AreEqual(20, engine.Enemies[0].Ult, "死亡单位不继续受击回能");
     }
 
+    [Test]
+    public void FullHealthHealStillExecutesSpecial_AndGrantsActionEnergy()
+    {
+        var hero = AutoBattleTestData.Hero();
+        AutoBattleTestData.SetSkill(hero, AutoBattleTestData.Skill("special",
+            AutoBattleTestData.Effect("heal", "allyLowestHp", multiplier: 0, hits: 0, percent: 25)));
+        var enemy = AutoBattleTestData.Enemy(speed: 1);
+        var engine = AutoBattleTestData.Engine(heroes: new[] { hero }, enemies: new[] { enemy });
+        engine.StartBattle();
+        BattleTestDriver.NextAction(engine, "hero");
+        engine.Ctx.StatesOf(engine.Enemies[0].Id).Apply(StatusType.Stun, 0, 2);
+        engine.Players[0].Heal(engine.Players[0].MaxHp);
+        var result = BattleTestDriver.NextAction(engine, "hero");
+        Assert.AreEqual("special", result.ActionType);
+        Assert.IsEmpty(result.Hits);
+        Assert.AreEqual(100, engine.Players[0].Ult);
+        Assert.AreEqual(engine.Players[0].MaxHp, engine.Players[0].Hp);
+        Assert.AreEqual(40, result.Charges.Single(c => c.UnitId == "hero").Amount);
+    }
+
+    [Test]
+    public void HealUsesTargetsMaximumHp_CapsAtFull_AndIncludesSelf()
+    {
+        var hero = AutoBattleTestData.Hero(hp: 200);
+        AutoBattleTestData.SetSkill(hero, AutoBattleTestData.Skill("special",
+            AutoBattleTestData.Effect("heal", "allyLowestHp", multiplier: 0, hits: 0, percent: 25)));
+        var engine = AutoBattleTestData.Engine(heroes: new[] { hero });
+        engine.StartBattle();
+        BattleTestDriver.NextAction(engine, "hero");
+        engine.Players[0].Hp = 170;
+        var result = BattleTestDriver.NextAction(engine, "hero");
+        var change = result.UnitChanges.Single(c => c.UnitId == "hero");
+        Assert.AreEqual(200, change.After.Hp);
+        Assert.Greater(change.HpDelta, 0);
+        Assert.LessOrEqual(change.HpDelta, 50);
+    }
+
+    [Test]
+    public void ActiveEnergyEffect_RecordsSkillSourceRatherThanPassive()
+    {
+        var hero = AutoBattleTestData.Hero();
+        AutoBattleTestData.SetSkill(hero, AutoBattleTestData.Skill("special",
+            AutoBattleTestData.Effect("energy", "self", multiplier: 0, hits: 0, amount: 15)));
+        var engine = AutoBattleTestData.Engine(heroes: new[] { hero });
+        engine.StartBattle();
+        BattleTestDriver.NextAction(engine, "hero");
+        engine.Ctx.StatesOf(engine.Enemies[0].Id).Apply(StatusType.Stun, 0, 2);
+        var result = BattleTestDriver.NextAction(engine, "hero");
+        Assert.AreEqual("special", result.ActionType);
+        Assert.AreEqual(15, result.Charges.Single(c => c.Trigger == "skill").Amount);
+        Assert.IsFalse(result.Charges.Any(c => c.Trigger == "passive"));
+        Assert.IsTrue(result.Charges.Any(c => c.Trigger == "action"));
+        Assert.AreEqual(100, engine.Players[0].Ult);
+    }
+
+    [Test]
+    public void BuffSpecialGrantsEnergyWithoutAnyAttackHit()
+    {
+        var hero = AutoBattleTestData.Hero();
+        AutoBattleTestData.SetSkill(hero, AutoBattleTestData.Skill("special",
+            AutoBattleTestData.Effect("attackUp", "allyAll", multiplier: 0, hits: 0, percent: 25, duration: 2)));
+        var engine = AutoBattleTestData.Engine(heroes: new[] { hero });
+        engine.StartBattle();
+        BattleTestDriver.NextAction(engine, "hero");
+        var result = BattleTestDriver.NextAction(engine, "hero");
+        Assert.IsEmpty(result.Hits);
+        Assert.AreEqual(25, engine.Ctx.StatesOf("hero").StrongestPercent(StatusType.AttackUp));
+        Assert.AreEqual(2, engine.Ctx.GetStatuses("hero").Single(s => s.Type == StatusType.AttackUp).Duration);
+        Assert.AreEqual(100, engine.Players[0].Ult);
+    }
 }

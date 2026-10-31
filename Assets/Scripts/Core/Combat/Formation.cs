@@ -4,55 +4,14 @@ using CQ.Core.Config;
 
 namespace CQ.Core.Combat
 {
-    /// <summary>格子拥有嘲讽及临时修正；占用者死亡后保留位置，但有效嘲讽为零。</summary>
     public sealed class Slot
     {
-        private sealed class Modifier
-        {
-            public int Delta;
-            public int Duration;
-        }
-        private readonly List<Modifier> _modifiers = new List<Modifier>();
         public string Id { get; }
         public string Row => Formation.RowOf(Id);
-        public int BaseTaunt { get; }
         public Unit Occupant { get; internal set; }
-        public long TauntModifier
-        {
-            get
-            {
-                long value = 0;
-                foreach (var modifier in _modifiers) value += modifier.Delta;
-                return value;
-            }
-        }
-        public int EffectiveTaunt
-        {
-            get
-            {
-                if (Occupant == null || Occupant.IsDead) return 0;
-                long value = BaseTaunt + TauntModifier;
-                return (int)Math.Max(0L, Math.Min(int.MaxValue, value));
-            }
-        }
-        internal Slot(string id, int baseTaunt)
-        {
-            Id = id;
-            BaseTaunt = baseTaunt;
-        }
-        public void AddModifier(int delta, int duration)
-        {
-            if (duration <= 0) throw new ArgumentOutOfRangeException(nameof(duration));
-            _modifiers.Add(new Modifier { Delta = delta, Duration = duration });
-        }
-        public void Tick()
-        {
-            for (int i = _modifiers.Count - 1; i >= 0; i--)
-                if (--_modifiers[i].Duration <= 0) _modifiers.RemoveAt(i);
-        }
+        internal Slot(string id) { Id = id; }
     }
 
-    /// <summary>每队固定前二后三；禁止隐式占位及死亡后补位。</summary>
     public sealed class Formation
     {
         private static readonly string[] SlotIds = { "front1", "front2", "back1", "back2", "back3" };
@@ -67,14 +26,13 @@ namespace CQ.Core.Combat
         public Formation(Team team, FormationConfig config)
         {
             if (config == null) throw new ArgumentNullException(nameof(config));
-            string error = ConfigValidator.ValidateFormation(config);
-            if (error != null) throw new ArgumentException(error, nameof(config));
             Team = team;
-            foreach (var id in SlotIds)
-                _slots.Add(new Slot(id, RowOf(id) == "front" ? config.frontBaseTaunt : config.backBaseTaunt));
+            foreach (var id in SlotIds) _slots.Add(new Slot(id));
             Slots = _slots.AsReadOnly();
         }
+
         public Slot GetSlot(string id) => _slots.Find(slot => slot.Id == id);
+
         internal void Occupy(Unit unit)
         {
             if (unit.Team != Team) throw new ArgumentException("单位不属于该队", nameof(unit));
@@ -83,7 +41,7 @@ namespace CQ.Core.Combat
             if (slot.Occupant != null) throw new ArgumentException("槽位重复: " + Team + "/" + unit.SlotId);
             slot.Occupant = unit;
         }
-        /// <summary>Validate everything before updating either side of a move/swap.</summary>
+
         public bool TryMove(Unit unit, string destination)
         {
             if (unit == null || unit.Team != Team) return false;
@@ -97,11 +55,6 @@ namespace CQ.Core.Combat
             if (other != null) other.SlotId = source.Id;
             unit.SlotId = target.Id;
             return true;
-        }
-
-        public void Tick()
-        {
-            foreach (var slot in _slots) slot.Tick();
         }
     }
 }

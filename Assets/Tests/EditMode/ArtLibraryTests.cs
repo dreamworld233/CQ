@@ -14,23 +14,24 @@ public class ArtLibraryTests
         Assert.IsNotNull(ArtLibrary.UnitSprite("lord_2"), "lord 暂复用精英怪，也应能取到");
     }
 
-    [Test]
-    public void Intent_Icons_Load_For_All_Types()
+    [TestCase("damage")]
+    [TestCase("heal")]
+    [TestCase("attackUp")]
+    [TestCase("defenseUp")]
+    [TestCase("energy")]
+    [TestCase("stun")]
+    public void Skill_Placeholder_Icons_Load_For_Current_Effects(string type)
     {
-        foreach (var t in new[] { "attack", "multi", "charge", "attackUp", "debuff" })
-            Assert.IsNotNull(ArtLibrary.IntentSprite(t), t + " 缺意图图标");
+        var skill = new SkillSpec { id = "skill", effects = new System.Collections.Generic.List<SkillEffectSpec>
+            { new SkillEffectSpec { type = type } } };
+        Assert.IsNotNull(ArtLibrary.SkillIcon(skill), type);
     }
 
     [Test]
-    public void Ring_And_Skill_Placeholder_Icons_Load()
+    public void Ring_And_Empty_Skill_Icon_Behavior_Are_Preserved()
     {
         Assert.IsNotNull(ArtLibrary.RingSprite(), "缺 按钮选中框（选中圆环）");
-
-        var dmg = new SkillSpec { id = "d", damage = new DamageSpec { amount = 1 } };
-        var injection = new SkillSpec { id = "h", injectCards = new System.Collections.Generic.List<CardInjectionSpec>
-            { new CardInjectionSpec { cardId = "heal", count = 1 } } };
-        Assert.IsNotNull(ArtLibrary.SkillIcon(dmg), "伤害技能应有占位图标（攻击）");
-        Assert.IsNotNull(ArtLibrary.SkillIcon(injection), "注牌终结技应有占位图标（增益）");
-        Assert.IsNull(ArtLibrary.SkillIcon(new SkillSpec { id = "x" }), "无伤害/无注牌不应给图标");
+        Assert.IsNull(ArtLibrary.SkillIcon(new SkillSpec { id = "empty" }));
+        Assert.IsNull(ArtLibrary.SkillIcon(null));
     }
 }

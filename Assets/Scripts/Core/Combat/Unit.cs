@@ -10,14 +10,14 @@ namespace CQ.Core.Combat
         public int Hp;
         public int MaxHp;
         public int BaseSpeed;
+        public int BaseAttack;
+        public int BaseDefense;
 
         public string SlotId;
         public string Row => Formation.RowOf(SlotId);
 
         public int Ult;
         public int MaxUlt;
-        public string UltChargeTrigger;
-        public int UltChargeAmount;
 
         public bool IsDead => Hp <= 0;
 

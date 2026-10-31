@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace CQ.Runtime
 {
-    public enum BattleSound { Select, Draw, Card, Inject, Remove, Hit, Heal, Victory, Defeat }
+    public enum BattleSound { Select, Skill, Ultimate, Hit, Heal, Victory, Defeat }
 
     public sealed class BattleAudio : MonoBehaviour
     {
@@ -23,10 +23,8 @@ namespace CQ.Runtime
             audio._source.spatialBlend = 0f;
             audio._source.volume = 0.25f;
             audio._clips.Add(BattleSound.Select, Tone("Select", 0.055f, 620f));
-            audio._clips.Add(BattleSound.Draw, Tone("Draw", 0.12f, 440f, 660f));
-            audio._clips.Add(BattleSound.Card, Tone("Card", 0.10f, 330f, 490f));
-            audio._clips.Add(BattleSound.Inject, Tone("Inject", 0.20f, 330f, 440f, 660f));
-            audio._clips.Add(BattleSound.Remove, Tone("Remove", 0.12f, 220f, 130f));
+            audio._clips.Add(BattleSound.Skill, Tone("Skill", 0.10f, 330f, 490f));
+            audio._clips.Add(BattleSound.Ultimate, Tone("Ultimate", 0.20f, 330f, 440f, 660f));
             audio._clips.Add(BattleSound.Hit, Tone("Hit", 0.075f, 95f));
             audio._clips.Add(BattleSound.Heal, Tone("Heal", 0.20f, 520f, 780f));
             audio._clips.Add(BattleSound.Victory, Tone("Victory", 0.36f, 392f, 494f, 587f, 784f));
@@ -47,11 +45,11 @@ namespace CQ.Runtime
 
         public static BattleSound? SoundFor(ActionResult result)
         {
-            if (result.InjectedCardIds.Count > 0) return BattleSound.Inject;
-            if (result.RemovedCardId != null) return BattleSound.Remove;
+            if (result.Kind == BattleEventKind.Skipped) return null;
+            if (result.ActionType == "ult") return BattleSound.Ultimate;
             if (result.UnitChanges.Any(change => change.HpDelta > 0)) return BattleSound.Heal;
-            if (result.Kind == BattleEventKind.Card) return BattleSound.Card;
-            return result.Hits.Count > 0 ? BattleSound.Hit : (BattleSound?)null;
+            if (result.Hits.Count > 0) return BattleSound.Hit;
+            return result.Kind == BattleEventKind.Skill ? BattleSound.Skill : (BattleSound?)null;
         }
 
         public void StopPlayback() => _source.Stop();

@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -14,7 +15,36 @@ using UnityEngine.UI;
 public class BattleFeedbackTests
 {
     [Test]
-    public void Synthesized_Clips_Are_Short_Quiet_And_Have_Silent_Endpoints()
+    public void PermanentStatusLabel_UsesStrongestEffect_AndReturnsAfterTemporaryBuffExpires()
+    {
+        var owner = new GameObject("PermanentLabelTest");
+        try
+        {
+            var hero = AutoBattleTestData.Hero();
+            hero.skills[3].trigger = "permanent";
+            hero.skills[3].effects[0].duration = 0;
+            hero.skills[3].effects[0].percent = 10;
+            var engine = AutoBattleTestData.Engine(heroes: new[] { hero });
+            var controller = owner.AddComponent<BattleController>();
+            typeof(BattleController).GetField("_engine", BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(controller, engine);
+            var method = typeof(BattleController).GetMethod("UnitStatusText", BindingFlags.Instance | BindingFlags.NonPublic);
+            var unit = engine.Players[0];
+            Assert.AreEqual("防+10%（常驻）", method.Invoke(controller, new object[] { unit }));
+            var statuses = engine.Ctx.StatesOf(unit.Id);
+            statuses.Apply(StatusType.DefenseUp, 25, 1);
+            Assert.AreEqual("防+25%（1次）", method.Invoke(controller, new object[] { unit }));
+            statuses.BeginAction();
+            statuses.CompleteAction();
+            Assert.AreEqual("防+10%（常驻）", method.Invoke(controller, new object[] { unit }));
+            unit.TakeDamage(unit.Hp);
+            Assert.AreEqual("", method.Invoke(controller, new object[] { unit }));
+        }
+        finally { UnityEngine.Object.DestroyImmediate(owner); }
+    }
+
+    [Test]
+    public void SynthesizedClipsAreShortQuietHaveSilentEndpoints_AndMuteSurvivesStop()
     {
         var owner = new GameObject("AudioTest");
         AudioClip[] clips = null;
@@ -58,82 +88,80 @@ public class BattleFeedbackTests
                 typeof(BattleAudio).GetMethod("OnDestroy", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(audio, null);
             UnityEngine.Object.DestroyImmediate(owner);
         }
-        Assert.IsTrue(clips.All(clip => clip == null), "销毁音效组件时必须释放生成的AudioClip");
+        Assert.IsTrue(clips.All(clip => clip == null));
     }
 
-    [TestCase("inject", BattleSound.Inject)]
-    [TestCase("remove", BattleSound.Remove)]
-    [TestCase("heal", BattleSound.Heal)]
-    [TestCase("card", BattleSound.Card)]
     [TestCase("hit", BattleSound.Hit)]
-    public void Sound_Classification_Uses_Action_Facts_Once(string action, BattleSound expected)
+    [TestCase("heal", BattleSound.Heal)]
+    [TestCase("buff", BattleSound.Skill)]
+    [TestCase("ult", BattleSound.Ultimate)]
+    public void SoundClassificationUsesOneCompleteAction_NotNumberOfHitSegments(string action, BattleSound expected)
     {
-        var caster = new Unit("source", Team.Player) { Hp = 50, MaxHp = 100, SlotId = "front1" };
-        var target = new Unit("target", Team.Enemy) { Hp = 100, MaxHp = 100, SlotId = "front1" };
-        var ctx = new CombatContext(new Rng(7), new[] { caster, target });
-        ctx.BeginAction(action == "card" || action == "heal" || action == "remove"
-            ? BattleEventKind.Card : BattleEventKind.Skill, caster, action, false);
-        if (action == "heal") caster.Heal(30);
-        if (action == "card" || action == "hit")
-            for (int i = 0; i < 3; i++)
-                Damage.Apply(ctx, new DamageRequest { SourceUnitId = caster.Id, TargetUnitId = target.Id, Amount = 1 });
-        var result = ctx.CompleteAction(injectedCardIds: action == "inject" ? new[] { "lightning", "slag" } : null,
-            removedCardId: action == "remove" ? "slag" : null);
+        var hero = AutoBattleTestData.Hero();
+        if (action == "hit")
+            AutoBattleTestData.SetSkill(hero, AutoBattleTestData.Skill("basic", AutoBattleTestData.Effect(hits: 3)));
+        if (action == "heal")
+            AutoBattleTestData.SetSkill(hero, AutoBattleTestData.Skill("special",
+                AutoBattleTestData.Effect("heal", "self", multiplier: 0, hits: 0, percent: 25)));
+        if (action == "buff")
+            AutoBattleTestData.SetSkill(hero, AutoBattleTestData.Skill("special",
+                AutoBattleTestData.Effect("attackUp", "self", multiplier: 0, hits: 0, percent: 25, duration: 2)));
+        var engine = AutoBattleTestData.Engine(heroes: new[] { hero });
+        if (action == "ult") engine.Players[0].GainUlt(100);
+        if (action == "heal") engine.Players[0].Hp = 5000;
+        engine.StartBattle();
+        var result = BattleTestDriver.NextAction(engine, "hero");
+        if (action == "heal" || action == "buff") result = BattleTestDriver.NextAction(engine, "hero");
         Assert.AreEqual(expected, BattleAudio.SoundFor(result));
-        if (action == "card" || action == "hit") Assert.AreEqual(3, result.Hits.Count);
-        Assert.AreEqual(1, ctx.ActionResults.Count);
+        if (action == "hit") Assert.AreEqual(3, result.Hits.Count);
     }
 
     [Test]
-    public void Skipped_Attack_Does_Not_Pretend_To_Hit()
+    public void StunnedActionDoesNotPretendToHitOrPlayUltimateSound()
     {
-        var ctx = new CombatContext(new Rng(7), Array.Empty<Unit>());
-        ctx.BeginAction(BattleEventKind.Intent, null, "interrupted", false);
-        Assert.IsNull(BattleAudio.SoundFor(ctx.CompleteAction()));
+        var engine = AutoBattleTestData.Engine();
+        engine.Ctx.StatesOf("hero").Apply(StatusType.Stun, 0, 1);
+        engine.Players[0].GainUlt(100);
+        engine.StartBattle();
+        var skipped = BattleTestDriver.NextAction(engine, "hero");
+        Assert.AreEqual(BattleEventKind.Skipped, skipped.Kind);
+        Assert.IsEmpty(skipped.Hits);
+        Assert.IsNull(BattleAudio.SoundFor(skipped));
     }
 
     [Test]
-    public void Draw_Feedback_Is_Not_Replayed_By_Hud_Refresh_And_Mute_Survives_Reset()
+    public void UiContainsOnlySetupControls_AndFeedbackResetPreservesMute()
     {
         var oldEventSystem = EventSystem.current;
-        var owner = new GameObject("FeedbackUiTest");
+        var owner = new GameObject("AutomaticBattleUiTest");
         try
         {
             var ui = BattleUi.Build(owner.transform);
             if (ui.CanvasRect == null)
                 typeof(BattleUi).GetMethod("BuildAll", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(ui, null);
-            var level = ConfigLoader.LoadLevels().items.Single(item => item.id == 1);
-            var engine = BattleEngine.Create(7, ConfigLoader.LoadCharacters().items, level,
-                ConfigLoader.LoadEnemies().items.ToDictionary(enemy => enemy.id), ConfigLoader.LoadCards().items);
-            int draws = 0;
-            ui.OnDrawCards = () => draws++;
-            ui.RefreshHand(engine, -1, "");
-            Assert.AreEqual(0, draws);
-            engine.StartBattle();
-            ui.RefreshHand(engine, -1, "");
-            Assert.AreEqual(1, draws);
-            var feedback = ui.CanvasRect.Find("FeedbackText").GetComponent<TextMeshProUGUI>();
-            StringAssert.Contains("抽到：", feedback.text);
-            Assert.IsFalse(feedback.raycastTarget);
-            ui.ShowFeedback("注入抽牌堆", Color.cyan);
-            ui.RefreshHand(engine, -1, "");
-            Assert.AreEqual(1, draws);
-            Assert.AreEqual("注入抽牌堆", feedback.text);
+            foreach (var removed in new[] { "Hand", "PilePanel", "PileButton" })
+                Assert.IsNull(ui.CanvasRect.Find(removed));
+            Assert.IsNull(typeof(BattleUi).GetMethod("BindUltimate"));
+            Assert.IsNull(typeof(BattleUi).GetMethod("RefreshHand"));
+            int starts = 0;
+            ui.OnStartBattle = () => starts++;
+            ui.StartBattleButton.onClick.Invoke();
+            Assert.AreEqual(1, starts);
             bool? muteRequest = null;
             ui.OnMuteChanged = muted => muteRequest = muted;
             var mute = ui.CanvasRect.Find("MuteButton").GetComponent<Button>();
             mute.onClick.Invoke();
             Assert.IsTrue(ui.Muted);
             Assert.AreEqual(true, muteRequest);
-            Assert.AreEqual("音效：关", mute.GetComponentInChildren<TextMeshProUGUI>().text);
-            ui.RefreshHand(null, -1, "");
-            Assert.IsTrue(ui.Muted);
+            ui.ShowFeedback("终结技", Color.cyan);
+            var feedback = ui.CanvasRect.Find("FeedbackText").GetComponent<TextMeshProUGUI>();
+            Assert.AreEqual("终结技", feedback.text);
+            Assert.IsFalse(feedback.raycastTarget);
+            ui.ResetBattleFeedback();
             Assert.AreEqual("", feedback.text);
-            var hand = ui.CanvasRect.Find("Hand/HandViewport/Cards");
-            foreach (Transform card in hand) Assert.AreEqual(Vector3.one, card.localScale);
-            ui.RefreshHand(engine, -1, "");
-            Assert.AreEqual(2, draws);
+            Assert.IsFalse(ui.ResultVisible);
             Assert.IsTrue(ui.Muted);
+            Assert.AreEqual("音效：关", mute.GetComponentInChildren<TextMeshProUGUI>().text);
             mute.onClick.Invoke();
             Assert.IsFalse(ui.Muted);
             Assert.AreEqual(false, muteRequest);
@@ -144,5 +172,64 @@ public class BattleFeedbackTests
             if (oldEventSystem == null && EventSystem.current != null)
                 UnityEngine.Object.DestroyImmediate(EventSystem.current.gameObject);
         }
+    }
+
+    [TestCase(Team.Player)]
+    [TestCase(Team.Enemy)]
+    public void UnitViewShowsEnergyForBothTeams_AndSeparatesCurrentActionFromStatuses(Team team)
+    {
+        var owner = new GameObject("UnitViewTest");
+        try
+        {
+            var unit = new Unit(team == Team.Player ? "sword" : "grunt_0", team)
+            {
+                Name = "角色", Hp = 80, MaxHp = 100, Ult = 20, MaxUlt = 100, SlotId = "front1"
+            };
+            var view = owner.AddComponent<UnitView>();
+            view.Setup(unit, Color.white);
+            view.Refresh(unit, "特殊 · 增益", "攻+25%（2次）");
+            var type = typeof(UnitView);
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var stat = (TextMeshPro)type.GetField("_stat", flags).GetValue(view);
+            var action = (TextMeshPro)type.GetField("_action", flags).GetValue(view);
+            var status = (TextMeshPro)type.GetField("_status", flags).GetValue(view);
+            var energy = (SpriteRenderer)type.GetField("_ultFill", flags).GetValue(view);
+            Assert.AreEqual("能量 20/100", stat.text);
+            Assert.AreEqual("特殊 · 增益", action.text);
+            Assert.AreEqual("攻+25%（2次）", status.text);
+            Assert.IsTrue(energy.gameObject.activeSelf);
+            float partialWidth = energy.transform.localScale.x;
+            unit.Ult = 100;
+            view.Refresh(unit, "终结技", "");
+            Assert.Greater(energy.transform.localScale.x, partialWidth);
+            Assert.AreEqual("能量 100/100", stat.text);
+            Assert.IsFalse(status.gameObject.activeSelf);
+        }
+        finally { UnityEngine.Object.DestroyImmediate(owner); }
+    }
+
+    [TestCase(true)]
+    [TestCase(false)]
+    public void StaleRuntimeDriverCannotAdvancePreviousBattle(bool invalidateGeneration)
+    {
+        var owner = new GameObject("DriverGenerationTest");
+        try
+        {
+            var controller = owner.AddComponent<BattleController>();
+            var engine = AutoBattleTestData.Engine();
+            engine.StartBattle();
+            var type = typeof(BattleController);
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            type.GetField("_engine", flags).SetValue(controller, engine);
+            int generation = (int)type.GetField("_generation", flags).GetValue(controller);
+            var drive = (IEnumerator)type.GetMethod("Drive", flags).Invoke(controller, new object[] { engine, generation });
+            Assert.IsTrue(drive.MoveNext());
+            if (invalidateGeneration) type.GetMethod("StopDriver", flags).Invoke(controller, null);
+            else type.GetField("_engine", flags).SetValue(controller, AutoBattleTestData.Engine());
+            Assert.IsFalse(drive.MoveNext());
+            Assert.IsEmpty(engine.ActionResults);
+            Assert.IsFalse(engine.IsActionOccupied);
+        }
+        finally { UnityEngine.Object.DestroyImmediate(owner); }
     }
 }

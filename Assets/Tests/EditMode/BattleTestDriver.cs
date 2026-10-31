@@ -6,32 +6,38 @@ using NUnit.Framework;
 
 internal static class BattleTestDriver
 {
-    public static void Drain(BattleEngine engine)
+    public static ActionResult Step(BattleEngine engine)
     {
-        for (int i = 0; i < 1000; i++)
+        var result = engine.CurrentAction ?? engine.Advance();
+        Assert.IsNotNull(result, "战斗应有下一动作");
+        Assert.IsTrue(engine.Confirm(engine.BattleId, result.Sequence));
+        return result;
+    }
+
+    public static ActionResult NextAction(BattleEngine engine, string actorId)
+    {
+        for (int i = 0; i < 200 && !engine.IsFinished; i++)
+        {
+            var result = Step(engine);
+            if (result.ActorId == actorId && result.Kind != BattleEventKind.Passive) return result;
+        }
+        Assert.Fail("未找到指定单位的个人行动: " + actorId);
+        return null;
+    }
+
+    public static void Drain(BattleEngine engine, int limit = 10000)
+    {
+        for (int i = 0; i < limit; i++)
         {
             var result = engine.CurrentAction ?? engine.Advance();
-            if (result == null) return;
+            if (result == null)
+            {
+                Assert.IsTrue(engine.IsFinished, "全自动战斗不可停在玩家输入阶段");
+                return;
+            }
             Assert.IsTrue(engine.Confirm(engine.BattleId, result.Sequence));
         }
-        Assert.Fail("动作推进超过上限");
-    }
-
-    public static IReadOnlyList<Unit> CompleteRound(BattleEngine engine)
-    {
-        Drain(engine);
-        if (engine.IsFinished) return engine.TurnOrder;
-        Assert.IsTrue(engine.BeginActions());
-        Drain(engine);
-        Assert.IsTrue(engine.IsFinished || engine.Flow == BattleFlow.Input);
-        return engine.TurnOrder;
-    }
-
-    public static bool RequestAndPlay(BattleEngine engine, string actor)
-    {
-        if (!engine.RequestUltimate(actor)) return false;
-        Drain(engine);
-        return true;
+        Assert.Fail("自动战斗未在动作预算内结束");
     }
 
     public static IReadOnlyList<Unit> CompleteRound(TurnManager turns, Action<Unit> resolve = null)

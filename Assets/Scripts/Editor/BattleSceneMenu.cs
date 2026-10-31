@@ -20,7 +20,7 @@ namespace CQ.Editor
             var go = new GameObject("BattleController");
             go.AddComponent<BattleController>();
             Selection.activeGameObject = go;
-            Debug.Log("[CQ.Editor] 已创建 BattleController GameObject。运行后 IMGUI 即可交互。");
+            Debug.Log("[CQ.Editor] 已创建 BattleController GameObject。进入 Play 后可布阵并开战。");
         }
     }
 }

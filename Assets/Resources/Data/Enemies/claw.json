@@ -1,11 +1,28 @@
 {
   "id": "claw",
   "name": "爪牙",
-  "maxHp": 60,
-  "baseSpeed": 7,
-  "intentSequence": ["slash", "multi"],
-  "intents": [
-    { "id": "slash", "type": "attack", "target": "single", "damage": 10 },
-    { "id": "multi", "type": "multi", "target": "single", "damage": 4, "hits": 3 }
+  "maxHp": 300,
+  "baseAttack": 38,
+  "baseDefense": 12,
+  "baseSpeed": 9,
+  "defaultSlot": "front1",
+  "initialEnergy": 20,
+  "maxEnergy": 100,
+  "actionEnergy": 40,
+  "hitEnergy": 10,
+  "specialInterval": 2,
+  "skills": [
+    { "id": "claw_basic", "name": "爪击", "type": "basic", "effects": [
+      { "type": "damage", "target": "enemyFront", "count": 1, "multiplierPercent": 100, "hits": 1 }
+    ] },
+    { "id": "claw_special", "name": "连爪", "type": "special", "effects": [
+      { "type": "damage", "target": "enemyFront", "count": 1, "multiplierPercent": 70, "hits": 3 }
+    ] },
+    { "id": "claw_ult", "name": "突袭", "type": "ult", "effects": [
+      { "type": "damage", "target": "enemyBack", "count": 1, "multiplierPercent": 180, "hits": 1 }
+    ] },
+    { "id": "claw_passive", "name": "嗜战", "type": "passive", "trigger": "roundStart", "effects": [
+      { "type": "attackUp", "target": "self", "count": 1, "percent": 5, "duration": 1 }
+    ] }
   ]
 }

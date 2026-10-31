@@ -8,7 +8,7 @@ namespace CQ.Runtime
     public class BattleLayout
     {
         public float teamGap = 2.8f;
-        public float arenaShift = 1.0f;
+        public float arenaShift = 0f;
         public float baseOffset = 1.5f;
         public float frontY = 0f;
         public float backY = 0f;

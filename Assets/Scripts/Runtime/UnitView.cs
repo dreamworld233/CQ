@@ -4,15 +4,9 @@ using UnityEngine;
 
 namespace CQ.Runtime
 {
-    /// <summary>
-    /// 世界单位表现：示意图 sprite（缺图回退纯色块）+ 加粗血条/终结技条 + 条上数值
-    /// + 敌人意图图标 + 选中高亮方框 + 受击闪白/抖动。附 BoxCollider2D 供点选。
-    /// 布局全部用世界单位常量；文字用「目标世界高度」定标（TmpKit.FitWorldHeight）。
-    /// </summary>
     public sealed class UnitView : MonoBehaviour
     {
         private const float ArtHeight = 1.5f;      // 示意图目标世界高
-        private const float IconHeight = 0.4f;     // 意图图标目标世界高
         private const float FrameHalf = 0.8f;      // 高亮框半宽
         private const float FrameFull = 1.72f;     // 高亮框边长
         private const float FrameThick = 0.1f;     // 高亮框杆粗
@@ -25,17 +19,17 @@ namespace CQ.Runtime
         private const float HpY = -1.00f;          // 血条 y
         private const float HpBgH = 0.42f;         // 血条底框高
         private const float HpFillH = 0.30f;       // 血条填充高
-        private const float UltY = -1.52f;         // 大招条 y（仅我方）
+        private const float UltY = -1.52f;
         private const float SubBgH = 0.20f;        // 终结技底框高
         private const float SubFillH = 0.12f;      // 终结技填充高
         private const float LabelY = -1.80f;       // 名字 y
-        private const float StatY = -2.06f;        // 终结技数值 y（仅我方）
+        private const float StatY = -2.06f;
         private const float FloatY = 2.05f;        // 飘字起始 y
 
         private const float HpTextH = 0.30f;       // 血条上数值的目标世界高
         private const float LabelTextH = 0.28f;
         private const float StatTextH = 0.24f;
-        private const float IntentTextH = 0.36f;
+        private const float ActionTextH = 0.36f;
         private const float RingSize = 1.9f;       // 选中圆环目标世界直径
         private const float RingY = -0.78f;        // 圆环 y（贴脚下）
 
@@ -46,11 +40,10 @@ namespace CQ.Runtime
         private static Sprite _white;
 
         private SpriteRenderer _sr;
-        private SpriteRenderer _intentIcon;
         private TextMeshPro _label;
         private TextMeshPro _stat;
         private TextMeshPro _hpText;
-        private TextMeshPro _intent;
+        private TextMeshPro _action;
         private TextMeshPro _status;
         private Transform _frame;
         private readonly SpriteRenderer[] _frameBars = new SpriteRenderer[4];
@@ -69,8 +62,8 @@ namespace CQ.Runtime
         private Vector3 _home;
 
         public string UnitId { get; private set; }
-        public bool FeedbackComplete => _flashT <= 0f && _shakeT <= 0f &&
-            GetComponentInChildren<FloatingText>() == null;
+        public float PlaybackSpeed { get; set; } = 1f;
+        public bool FeedbackComplete => _flashT <= 0f && _shakeT <= 0f;
 
         public void Setup(Unit unit, Color teamColor)
         {
@@ -96,12 +89,11 @@ namespace CQ.Runtime
             }
             _sr.sortingOrder = unit.Row == "front" ? 10 : 5;
 
-            _intentIcon = MakeRenderer("IntentIcon", new Vector3(0f, 1.34f, 0f), 40);
-            _intent = TmpKit.MakeWorldText(transform, "IntentText", new Vector3(0f, 1.02f, 0f),
-                UiKit.FontBold, IntentTextH, Color.yellow, 55, FontStyles.Normal, "意");
-            TmpKit.SetOutline(_intent, new Color(0f, 0f, 0f, 0.9f), 0.2f);
+            _action = TmpKit.MakeWorldText(transform, "ActionText", new Vector3(0f, 1.02f, 0f),
+                UiKit.FontBold, ActionTextH, Color.yellow, 55);
+            TmpKit.SetOutline(_action, new Color(0f, 0f, 0f, 0.9f), 0.2f);
 
-            MakeBars(unit.Team == Team.Player);
+            MakeBars();
             _label = TmpKit.MakeWorldText(transform, "Label", new Vector3(0f, LabelY, 0f),
                 UiKit.FontBold, LabelTextH, Color.white, 55, FontStyles.Normal, unit.Name);
             TmpKit.SetOutline(_label, new Color(0f, 0f, 0f, 0.9f), 0.2f);
@@ -115,7 +107,7 @@ namespace CQ.Runtime
             var col = gameObject.AddComponent<BoxCollider2D>();
             col.size = new Vector2(ColliderW, ColliderH);
 
-            Refresh(unit, "", "");
+            Refresh(unit, "");
         }
 
         public void SetPosition(Vector3 position, Unit unit)
@@ -126,7 +118,7 @@ namespace CQ.Runtime
             if (_sr != null) _sr.sortingOrder = unit.Row == "front" ? 10 : 5;
         }
 
-        public void Refresh(Unit unit, string intentText, string intentType, string statusText = "")
+        public void Refresh(Unit unit, string actionText, string statusText = "")
         {
             float hpRatio = unit.MaxHp > 0 ? (float)unit.Hp / unit.MaxHp : 0f;
             if (_hpFill != null)
@@ -139,10 +131,7 @@ namespace CQ.Runtime
                 _hpFill.color = _hpColor;
             }
 
-            if (unit.Team == Team.Player)
-            {
-                SetFill(_ultFill, unit.MaxUlt > 0 ? (float)unit.Ult / unit.MaxUlt : 0f, BarW - BarInset);
-            }
+            SetFill(_ultFill, unit.MaxUlt > 0 ? (float)unit.Ult / unit.MaxUlt : 0f, BarW - BarInset);
 
             if (_hpText != null)
             {
@@ -153,9 +142,9 @@ namespace CQ.Runtime
             if (_label != null)
                 _label.text = unit.Name;
 
-            if (_stat != null && unit.Team == Team.Player)
+            if (_stat != null)
             {
-                _stat.text = "终结技 " + unit.Ult + "/" + unit.MaxUlt;
+                _stat.text = "能量 " + unit.Ult + "/" + unit.MaxUlt;
                 TmpKit.FitWorldHeight(_stat, StatTextH);
             }
 
@@ -166,20 +155,11 @@ namespace CQ.Runtime
                 FitReadableText(_status, StatTextH, 2.7f);
             }
 
-            bool composite = !string.IsNullOrEmpty(intentText) && intentText.Contains("\n");
-            var icon = ArtLibrary.IntentSprite(intentType);
-            if (_intentIcon != null)
+            if (_action != null)
             {
-                _intentIcon.sprite = icon;
-                if (icon != null) FitSpriteHeight(_intentIcon.transform, icon, IconHeight);
-                _intentIcon.gameObject.SetActive(icon != null && !composite);
-            }
-
-            if (_intent != null)
-            {
-                _intent.text = intentText;
-                _intent.gameObject.SetActive(!string.IsNullOrEmpty(intentText));
-                FitReadableText(_intent, IntentTextH * (composite ? 2f : 1f), 2.7f);
+                _action.text = actionText;
+                _action.gameObject.SetActive(!string.IsNullOrEmpty(actionText));
+                FitReadableText(_action, ActionTextH, 2.7f);
             }
         }
 
@@ -235,7 +215,7 @@ namespace CQ.Runtime
 
         private void Update()
         {
-            float dt = Time.deltaTime;
+            float dt = Time.deltaTime * PlaybackSpeed;
 
             if (_flashT > 0f && _sr != null)
             {
@@ -270,8 +250,7 @@ namespace CQ.Runtime
 
         // ---------- 构建 ----------
 
-        /// <summary>血条（双方，带底框/刻度/条上数值）+ 终结技条（仅我方）。纯代码，不依赖素材。</summary>
-        private void MakeBars(bool isPlayer)
+        private void MakeBars()
         {
             MakeBar("HpBg", HpY, HpBgH, BarW, new Color(0.05f, 0.06f, 0.09f, 0.98f), 35);
             MakeBar("HpBorder", HpY, HpBgH + 0.06f, BarW + 0.06f, new Color(0.55f, 0.60f, 0.68f, 0.9f), 34);
@@ -289,13 +268,11 @@ namespace CQ.Runtime
                 UiKit.FontBold, HpTextH, Color.white, 56, FontStyles.Normal, "0/0");
             TmpKit.SetOutline(_hpText, new Color(0f, 0f, 0f, 1f), 0.28f);
 
-            if (!isPlayer) return;
-
             MakeBar("UltBg", UltY, SubBgH, BarW, new Color(0.05f, 0.06f, 0.09f, 0.98f), 35);
             _ultFill = MakeBar("UltFill", UltY, SubFillH, BarW - BarInset, new Color(1f, 0.85f, 0.25f), 36);
 
             _stat = TmpKit.MakeWorldText(transform, "StatText", new Vector3(0f, StatY, 0f),
-                UiKit.FontBold, StatTextH, new Color(0.75f, 0.92f, 1f), 55, FontStyles.Normal, "终结技 0/0");
+                UiKit.FontBold, StatTextH, new Color(0.75f, 0.92f, 1f), 55, FontStyles.Normal, "能量 0/0");
             TmpKit.SetOutline(_stat, new Color(0f, 0f, 0f, 0.9f), 0.2f);
         }
 
@@ -365,18 +342,6 @@ namespace CQ.Runtime
             sr.color = Color.yellow;
             sr.sortingOrder = 30;
             _frameBars[index] = sr;
-        }
-
-        private SpriteRenderer MakeRenderer(string goName, Vector3 localPos, int order)
-        {
-            var go = new GameObject(goName);
-            go.transform.SetParent(transform, false);
-            go.transform.localPosition = localPos;
-            var sr = go.AddComponent<SpriteRenderer>();
-            sr.sortingOrder = order;
-            sr.color = Color.white;
-            go.SetActive(false);
-            return sr;
         }
 
         private static void FitSpriteHeight(Transform t, Sprite s, float targetHeight)

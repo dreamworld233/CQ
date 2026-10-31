@@ -4,11 +4,6 @@ using UnityEngine;
 
 namespace CQ.Runtime
 {
-    /// <summary>
-    /// 表现层素材库：按约定名从 `Resources/Arts/UI/` 加载单位示意图、敌人意图图标、选中圆环。
-    /// 缺素材返回 null，调用方回退纯色/代码图形占位，保证不空引用。
-    /// （表现层映射，非平衡数值，不进 JSON。）
-    /// </summary>
     public static class ArtLibrary
     {
         private const string Root = "Arts/UI/";
@@ -26,28 +21,11 @@ namespace CQ.Runtime
             { "lord",  "精英怪示意图" },   // 领主示意图缺，暂复用精英怪
         };
 
-        /// <summary>敌人意图 type → 图标文件名。</summary>
-        private static readonly Dictionary<string, string> IntentArt = new Dictionary<string, string>
-        {
-            { "attack",   "攻击" },
-            { "multi",    "攻击" },
-            { "charge",   "攻击" },
-            { "attackUp", "增益" },
-            { "debuff",   "减益" },
-            { "defend",   "防御" },
-        };
-
         public static Sprite UnitSprite(string unitId)
         {
             string key = ConfigIdOf(unitId);
             if (string.IsNullOrEmpty(key)) return null;
             return UnitArt.TryGetValue(key, out var file) ? Load(file) : null;
-        }
-
-        public static Sprite IntentSprite(string intentType)
-        {
-            if (string.IsNullOrEmpty(intentType)) return null;
-            return IntentArt.TryGetValue(intentType, out var file) ? Load(file) : null;
         }
 
         /// <summary>
@@ -57,14 +35,21 @@ namespace CQ.Runtime
         /// </summary>
         public static Sprite RingSprite() => Load("按钮选中框");
 
-        /// <summary>
-        /// 技能图标占位：普攻 → 攻击图标，注牌终结技 → 增益图标。
-        /// </summary>
         public static Sprite SkillIcon(SkillSpec skill)
         {
-            if (skill == null) return null;
-            if (skill.damage != null) return Load("攻击");
-            if (skill.injectCards != null && skill.injectCards.Count > 0) return Load("增益");
+            if (skill?.effects == null) return null;
+            foreach (var effect in skill.effects)
+            {
+                switch (effect.type)
+                {
+                    case "damage": return Load("攻击");
+                    case "defenseUp": return Load("防御");
+                    case "heal":
+                    case "attackUp":
+                    case "energy": return Load("增益");
+                    case "stun": return Load("减益");
+                }
+            }
             return null;
         }
 

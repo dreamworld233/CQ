@@ -1,1 +1,0 @@
-{ "id": "weaken", "name": "群体虚弱", "effect": { "type": "weaken", "target": "all", "percent": 25 }, "count": 1 }

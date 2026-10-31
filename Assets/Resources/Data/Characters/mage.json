@@ -1,32 +1,28 @@
 {
   "id": "mage",
   "name": "术士",
-  "role": "support",
-  "maxHp": 80,
+  "maxHp": 320,
+  "baseAttack": 42,
+  "baseDefense": 10,
   "baseSpeed": 8,
-  "maxUlt": 3,
   "defaultSlot": "back1",
+  "initialEnergy": 20,
+  "maxEnergy": 100,
+  "actionEnergy": 40,
+  "hitEnergy": 10,
+  "specialInterval": 2,
   "skills": [
-    {
-      "id": "mage_basic",
-      "name": "魔弹",
-      "type": "basic",
-      "damage": {
-        "kind": "magic",
-        "target": "single",
-        "amount": 10
-      }
-    },
-    {
-      "id": "mage_ult",
-      "name": "群星坠落",
-      "type": "ult",
-      "injectCards": [
-        { "cardId": "lightning", "count": 1 },
-        { "cardId": "slag", "count": 1 }
-      ]
-    }
-  ],
-  "ultChargeTrigger": "attack",
-  "ultChargeAmount": 1
+    { "id": "mage_basic", "name": "魔弹", "type": "basic", "effects": [
+      { "type": "damage", "target": "enemyFront", "count": 1, "multiplierPercent": 100, "hits": 1 }
+    ] },
+    { "id": "mage_special", "name": "鼓舞", "type": "special", "effects": [
+      { "type": "attackUp", "target": "allyRandom", "count": 2, "percent": 25, "duration": 2 }
+    ] },
+    { "id": "mage_ult", "name": "群星坠落", "type": "ult", "effects": [
+      { "type": "damage", "target": "enemyAll", "count": 1, "multiplierPercent": 180, "hits": 1 }
+    ] },
+    { "id": "mage_passive", "name": "聚能", "type": "passive", "trigger": "roundStart", "effects": [
+      { "type": "energy", "target": "allyLowestEnergy", "count": 1, "amount": 10 }
+    ] }
+  ]
 }

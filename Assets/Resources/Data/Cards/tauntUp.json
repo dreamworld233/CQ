@@ -1,1 +1,0 @@
-{ "id": "tauntUp", "name": "引敌", "effect": { "type": "tauntUp", "amount": 100, "duration": 1 }, "count": 0 }

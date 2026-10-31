@@ -1,1 +1,0 @@
-{ "id": "heal", "name": "治疗", "effect": { "type": "heal", "target": "single", "amount": 30 }, "count": 0 }

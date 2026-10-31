@@ -4,12 +4,9 @@ namespace CQ.Core.Combat
 {
     public enum StatusType
     {
-        Weaken,
-        Shield,
         AttackUp,
-        Slow,
-        Interrupt,
-        Vulnerable
+        DefenseUp,
+        Stun
     }
 
     public static class StatusTypes
@@ -18,12 +15,9 @@ namespace CQ.Core.Combat
         {
             switch (id)
             {
-                case "weaken": return StatusType.Weaken;
-                case "shield": return StatusType.Shield;
                 case "attackUp": return StatusType.AttackUp;
-                case "slow": return StatusType.Slow;
-                case "interrupt": return StatusType.Interrupt;
-                case "vulnerable": return StatusType.Vulnerable;
+                case "defenseUp": return StatusType.DefenseUp;
+                case "stun": return StatusType.Stun;
                 default: throw new ArgumentException("未知状态 id: " + id);
             }
         }

@@ -1,31 +1,28 @@
 {
   "id": "guard",
   "name": "护卫",
-  "role": "tank",
-  "maxHp": 160,
+  "maxHp": 520,
+  "baseAttack": 30,
+  "baseDefense": 28,
   "baseSpeed": 6,
-  "maxUlt": 2,
   "defaultSlot": "front2",
+  "initialEnergy": 20,
+  "maxEnergy": 100,
+  "actionEnergy": 40,
+  "hitEnergy": 10,
+  "specialInterval": 2,
   "skills": [
-    {
-      "id": "guard_basic",
-      "name": "盾击",
-      "type": "basic",
-      "damage": {
-        "kind": "physical",
-        "target": "single",
-        "amount": 8
-      }
-    },
-    {
-      "id": "guard_ult",
-      "name": "治疗",
-      "type": "ult",
-      "injectCards": [
-        { "cardId": "heal", "count": 1 }
-      ]
-    }
-  ],
-  "ultChargeTrigger": "hit",
-  "ultChargeAmount": 1
+    { "id": "guard_basic", "name": "盾击", "type": "basic", "effects": [
+      { "type": "damage", "target": "enemyFront", "count": 1, "multiplierPercent": 100, "hits": 1 }
+    ] },
+    { "id": "guard_special", "name": "守护", "type": "special", "effects": [
+      { "type": "defenseUp", "target": "allyFront", "count": 1, "percent": 25, "duration": 2 }
+    ] },
+    { "id": "guard_ult", "name": "疗愈", "type": "ult", "effects": [
+      { "type": "heal", "target": "allyLowestHp", "count": 1, "percent": 25 }
+    ] },
+    { "id": "guard_passive", "name": "坚守", "type": "passive", "trigger": "permanent", "effects": [
+      { "type": "defenseUp", "target": "self", "count": 1, "percent": 10 }
+    ] }
+  ]
 }

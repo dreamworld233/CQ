@@ -19,7 +19,6 @@ namespace CQ.Core.Config
         public string[] players;
         public string tutorialIntro;
         public string[] tutorialHints;
-        public string[] tutorialDrawOrder;
         public List<WaveConfig> waves;
     }
 }

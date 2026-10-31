@@ -1,11 +1,28 @@
 {
   "id": "grunt",
   "name": "杂兵",
-  "maxHp": 40,
-  "baseSpeed": 8,
-  "intentSequence": ["aoe", "heavy"],
-  "intents": [
-    { "id": "aoe", "type": "attack", "target": "all", "damage": 40 },
-    { "id": "heavy", "type": "attack", "target": "single", "damage": 200 }
+  "maxHp": 350,
+  "baseAttack": 40,
+  "baseDefense": 10,
+  "baseSpeed": 7,
+  "defaultSlot": "front1",
+  "initialEnergy": 20,
+  "maxEnergy": 100,
+  "actionEnergy": 40,
+  "hitEnergy": 10,
+  "specialInterval": 2,
+  "skills": [
+    { "id": "grunt_basic", "name": "挥击", "type": "basic", "effects": [
+      { "type": "damage", "target": "enemyFront", "count": 1, "multiplierPercent": 100, "hits": 1 }
+    ] },
+    { "id": "grunt_special", "name": "重击", "type": "special", "effects": [
+      { "type": "damage", "target": "enemyFront", "count": 1, "multiplierPercent": 160, "hits": 1 }
+    ] },
+    { "id": "grunt_ult", "name": "奋力一击", "type": "ult", "effects": [
+      { "type": "damage", "target": "enemyFront", "count": 1, "multiplierPercent": 250, "hits": 1 }
+    ] },
+    { "id": "grunt_passive", "name": "斗志", "type": "passive", "trigger": "roundStart", "effects": [
+      { "type": "attackUp", "target": "self", "count": 1, "percent": 5, "duration": 1 }
+    ] }
   ]
 }

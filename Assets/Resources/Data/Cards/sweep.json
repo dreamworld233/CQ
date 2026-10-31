@@ -1,1 +1,0 @@
-{ "id": "sweep", "name": "群体攻击", "effect": { "type": "damage", "target": "all", "amount": 10 }, "count": 1 }

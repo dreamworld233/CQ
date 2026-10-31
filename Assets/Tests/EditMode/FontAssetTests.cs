@@ -90,43 +90,6 @@ public class FontAssetTests
         Assert.Greater(text.textInfo.characterCount, 0, "uGUI 文本应栅格化出字形");
     }
 
-    [Test]
-    public void Battle_Log_Scrolls_Within_Viewport_And_Preserves_History_Position()
-    {
-        var existingEventSystem = UnityEngine.EventSystems.EventSystem.current;
-        var owner = new GameObject("BattleLogTest");
-        _spawned.Add(owner);
-        var ui = BattleUi.Build(owner.transform);
-        typeof(BattleUi).GetMethod("Awake", System.Reflection.BindingFlags.Instance |
-            System.Reflection.BindingFlags.NonPublic).Invoke(ui, null);
-        if (existingEventSystem == null && UnityEngine.EventSystems.EventSystem.current != null)
-            _spawned.Add(UnityEngine.EventSystems.EventSystem.current.gameObject);
-        Canvas.ForceUpdateCanvases();
-        var scroll = ui.EventText.GetComponentInParent<ScrollRect>();
-        Assert.IsNotNull(scroll);
-        Assert.IsTrue(scroll.vertical);
-        Assert.IsFalse(scroll.horizontal);
-        Assert.IsNotNull(scroll.viewport.GetComponent<RectMask2D>());
-        Assert.IsTrue(scroll.viewport.GetComponent<Image>().raycastTarget);
-        Assert.IsNotNull(scroll.verticalScrollbar);
-
-        string history = string.Join("\n", System.Linq.Enumerable.Repeat("战报：剑士攻击敌人，造成伤害。", 40));
-        ui.SetEvent(history);
-        Assert.Greater(scroll.content.rect.height, scroll.viewport.rect.height);
-        Assert.That(scroll.verticalNormalizedPosition, Is.EqualTo(0f).Within(0.001f));
-        scroll.verticalNormalizedPosition = 1f;
-        float offset = scroll.content.anchoredPosition.y;
-        ui.SetEvent(history + "\n新战报");
-        Assert.That(scroll.content.anchoredPosition.y, Is.EqualTo(offset).Within(0.01f));
-        ui.SetEvent(history + "\n新战报");
-        Assert.That(scroll.content.anchoredPosition.y, Is.EqualTo(offset).Within(0.01f));
-        scroll.verticalNormalizedPosition = 0f;
-        ui.SetEvent(history + "\n新战报\n最新战报");
-        Assert.That(scroll.verticalNormalizedPosition, Is.EqualTo(0f).Within(0.001f));
-        ui.SetEvent("新一局");
-        Assert.That(scroll.content.rect.height, Is.EqualTo(scroll.viewport.rect.height).Within(0.01f));
-    }
-
     /// <summary>
     /// demo 全部可能显示的文案都必须有字形，否则 TMP 会退化成 □ 并刷
     /// 「The character with Unicode value \uXXXX was not found ...」警告。
@@ -139,16 +102,13 @@ public class FontAssetTests
     {
         var samples = new List<string>
         {
-            // UI 文案与符号（含符文分隔、箭头、坐标标记）
-            "行动条", "第 1 回合", "出手顺序", "战报", "结束回合", "重开", "下一关 → ", "我方胜利", "我方失败",
-            "重试加载", "配置错误，查看 Console", "无可用关卡", "请点目标", "此技能点友方", "出招失败（能量/目标不符）",
-            "已登记，结束回合结算", "锁定 ", "开战 ", "×", "→", "↑", "↓", "〔〕",
-            // 战斗文本模板
-            "能 3/3  大 0/3", "12/40", "120/120", "攻击", "连击", "蓄力", "攻增", "减益", "全体", "卡", "倒", "亡",
-            "我 剑士〔斩击〕 → 小怪 -12", "卡〔打断〕 → 领主",
-            "就绪 · 注牌", "注入抽牌堆：疾风斩×1、落雷×1、雷渣×1（后续抽取）",
-            "抽牌堆 / 弃牌堆", "手选存活我方恢复 HP（不复活）", "无效果；点按移出本场，不回洗",
-            "注牌配置错误，查看 Console"
+            "战报", "重开", "下一关 → ", "我方胜利", "我方失败", "第 1 回合",
+            "重试加载", "配置错误，查看 Console", "无可用关卡", "开战", "全自动战斗", "普攻", "特殊", "终结技", "被动", "跳过",
+            "音效：开", "音效：关", "查看战报", "收起战报", "重新挑战", "速度：1×", "速度：2×",
+            "队伍输出 100 有效治疗 50", "整装待发，准备迎接下一场战斗。", "三关完成，感谢你的指挥！",
+            "调整站位，再试一次。每次尝试都能了解伙伴的表现。", "我方伙伴", "敌方", "输出", "承伤", "治疗",
+            "完整数值", "简写数值", "每列独立比较，仅统计实际生效值，不含溢出。", "0", "999", "1.2k", "3k", "1.2m", "2.3b",
+            "攻+25%（2次）", "防+25%（2次）", "攻+10%（常驻）", "防+10%（常驻）", "眩晕", "眩晕跳过", "12/40", "120/120", "20/100", "倒", "亡", "×", "→", "〔〕"
         };
 
         var chars = ConfigLoader.LoadCharacters();
@@ -160,10 +120,11 @@ public class FontAssetTests
         }
 
         var enemies = ConfigLoader.LoadEnemies();
-        foreach (var e in enemies.items) samples.Add(e.name);
-
-        var cards = ConfigLoader.LoadCards();
-        foreach (var c in cards.items) samples.Add(c.name);
+        foreach (var enemy in enemies.items)
+        {
+            samples.Add(enemy.name);
+            foreach (var skill in enemy.skills) samples.Add(skill.name);
+        }
 
         var levels = ConfigLoader.LoadLevels();
         foreach (var l in levels.items) samples.Add(l.name);

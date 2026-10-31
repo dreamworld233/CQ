@@ -1,1 +1,0 @@
-{ "id": "interrupt", "name": "打断", "effect": { "type": "interrupt" }, "count": 1 }
