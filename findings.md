@@ -1,5 +1,12 @@
 # 发现与决策
 
+## 2026-11-01 G轮：功能推送与初期图标
+- 用户实玩认可F轮拖拽，授权提交推送；D/E/F已以73aec28提交并推送origin/feat/card-injection-r2，不合并main。
+- 混合BattleController通过索引分离，临时背景接线/ArtLibrary/美术测试、素材、字体及本地版本号仍留工作区；23项保护文件hash未变。新BattleEffect.meta默认空白已清理后提交。
+- 自绘初期图标采用深蓝绿渐变底、金色盾形与双叶/星点，无文字；SVG与Pillow可重生成脚本保留在ArtSource/Tools，PNG放Assets/Art/AppIcon（非Resources）。已目视默认/圆形/自适应及96/48/32px预览，小尺寸仍可辨识；自适应前景缩至90%以保留遮罩安全区。
+- 只配置图标，不顺带改公司名、版本号、包名等。Android覆盖legacy/round/adaptive，保留默认图标回退；本轮不产出最终APK，不声称手机启动器已验收。
+
+
 ## 2026-11-01 F轮：拖拽布阵实施
 - 已恢复三份记录与session-catchup（退出0无输出），核对git status/diff；已有美术、字体、D/E轮本地工作全部保留。
 - 现有输入仅鼠标按下+选中角色后点小椭圆槽位，成功后所有视图SetPosition瞬移；旧选中圈由UnitView.SetHighlight控制。

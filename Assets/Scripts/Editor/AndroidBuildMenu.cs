@@ -18,6 +18,7 @@ namespace CQ.Editor
             PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARMv7 | AndroidArchitecture.ARM64;
             PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel22;
             PlayerSettings.SetScriptingBackend(NamedBuildTarget.Android, ScriptingImplementation.IL2CPP);
+            AppIconSettings.Configure();
 
             Debug.Log("[CQ.Editor] Android 已配置：横屏左 + ARMv7/ARM64 + IL2CPP + com.dreamworld233.cq");
         }

@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>CQ initial app icon: a growing companion, protected by a shield</title>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#174849"/>
+      <stop offset="1" stop-color="#101b30"/>
+    </linearGradient>
+    <linearGradient id="shield" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f5451"/>
+      <stop offset="1" stop-color="#122c38"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe7a2"/>
+      <stop offset="1" stop-color="#c9994b"/>
+    </linearGradient>
+    <linearGradient id="leaf" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b1f5c6"/>
+      <stop offset="1" stop-color="#58cda8"/>
+    </linearGradient>
+  </defs>
+  <g id="background-layer">
+    <rect width="1024" height="1024" fill="url(#background)"/>
+  </g>
+  <g id="foreground-layer">
+    <path d="M 512 238 C 442 282 352 302 290 308 L 290 474 C 290 630 398 742 512 802 C 626 742 734 630 734 474 L 734 308 C 672 302 582 282 512 238 Z" fill="url(#shield)" stroke="url(#gold)" stroke-width="24"/>
+    <path d="M 512 275 C 448 313 377 327 326 335 L 326 474 C 326 603 413 700 512 758 C 611 700 698 603 698 474 L 698 335 C 647 327 576 313 512 275 Z" fill="none" stroke="#46746a" stroke-width="4"/>
+    <path d="M 493 659 C 489 575 533 488 604 438" fill="none" stroke="#f7df9b" stroke-width="18" stroke-linecap="round"/>
+    <path d="M 524 534 C 522 461 568 413 644 401 C 649 478 608 532 524 534 Z" fill="url(#leaf)"/>
+    <path d="M 503 586 C 436 594 393 554 388 490 C 449 482 506 518 503 586 Z" fill="#73d5ac"/>
+    <path d="M 437 363 L 449 391 L 477 403 L 449 415 L 437 443 L 425 415 L 397 403 L 425 391 Z" fill="#ffe7a2"/>
+  </g>
+</svg>
