@@ -66,6 +66,9 @@ public class BattlePresentationTests
             text.text == "出手顺序" || text.text == "行动记录" || text.text == "战况"));
         Assert.IsTrue(_ui.StartBattleButton.gameObject.activeInHierarchy);
         Assert.IsTrue(_ui.SpeedButton.gameObject.activeInHierarchy);
+        Assert.IsNull(typeof(BattleUi).GetField("RestartButton"));
+        Assert.IsFalse(_ui.CanvasRect.GetComponentsInChildren<Button>(true).Any(button =>
+            button.transform.parent == _ui.CanvasRect && button.GetComponentInChildren<TextMeshProUGUI>().text == "重开"));
     }
 
     [Test]
@@ -108,6 +111,21 @@ public class BattlePresentationTests
         Assert.IsTrue(retry.gameObject.activeInHierarchy);
         retry.onClick.Invoke();
         Assert.AreEqual(1, retries);
+    }
+
+    [TestCase("我方胜利")]
+    [TestCase("我方失败")]
+    public void CompleteResultTextFitsItsContainers(string title)
+    {
+        _ui.ShowResult(title, "第三关 · 9 回合\n队伍输出 1.2k    有效治疗 650\n整装待发，准备迎接下一场战斗。",
+            TwoUnitRows(), "下一关 → 第三关", true);
+        Canvas.ForceUpdateCanvases();
+        var overflowing = _ui.GetComponentsInChildren<TextMeshProUGUI>().Where(text =>
+        {
+            text.ForceMeshUpdate();
+            return text.isTextOverflowing;
+        }).Select(text => text.transform.parent.name + "/" + text.name + ": " + text.text).ToArray();
+        Assert.IsEmpty(overflowing, string.Join("\n", overflowing));
     }
 
     [Test]
@@ -274,7 +292,7 @@ public class BattlePresentationTests
         Assert.AreEqual(Vector2.zero, overlay.offsetMin);
         Assert.AreEqual(Vector2.zero, overlay.offsetMax);
         Assert.IsTrue(overlay.GetComponent<Image>().raycastTarget);
-        Assert.Greater(overlay.GetSiblingIndex(), _ui.RestartButton.transform.GetSiblingIndex());
+        Assert.Greater(overlay.GetSiblingIndex(), _ui.StartBattleButton.transform.GetSiblingIndex());
         Assert.Greater(overlay.GetSiblingIndex(), _ui.SpeedButton.transform.GetSiblingIndex());
         Canvas.ForceUpdateCanvases();
         var corners = new Vector3[4];

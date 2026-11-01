@@ -1,37 +1,34 @@
+using System.Collections.Generic;
+using System.Linq;
 using CQ.Core.Combat;
 using TMPro;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace CQ.Runtime
 {
     public sealed class UnitView : MonoBehaviour
     {
         private const float ArtHeight = 1.5f;      // 示意图目标世界高
-        private const float FrameHalf = 0.8f;      // 高亮框半宽
-        private const float FrameFull = 1.72f;     // 高亮框边长
-        private const float FrameThick = 0.1f;     // 高亮框杆粗
         private const float ColliderW = 1.4f;      // 点选碰撞体宽（须小于同侧间距 teamGap）
         private const float ColliderH = 1.7f;      // 点选碰撞体高
 
         // 数值条布局（世界单位）。BarW 须小于 teamGap(2.0)，否则相邻单位的条视觉粘连。
         private const float BarW = 1.9f;           // 条全宽
         private const float BarInset = 0.12f;      // 填充相对底框的左右内缩（形成描边观感）
-        private const float HpY = -1.00f;          // 血条 y
-        private const float HpBgH = 0.42f;         // 血条底框高
-        private const float HpFillH = 0.30f;       // 血条填充高
-        private const float UltY = -1.52f;
-        private const float SubBgH = 0.20f;        // 终结技底框高
-        private const float SubFillH = 0.12f;      // 终结技填充高
-        private const float LabelY = -1.80f;       // 名字 y
-        private const float StatY = -2.06f;
-        private const float FloatY = 2.05f;        // 飘字起始 y
+        private const float HpY = 1.13f;           // 头顶血条，与立绘顶部留出间隙
+        private const float HpBgH = 0.30f;
+        private const float HpFillH = 0.22f;
+        private const float UltY = 0.83f;
+        private const float SubBgH = 0.20f;
+        private const float SubFillH = 0.14f;
+        private const float LabelY = -1.04f;
+        private const float FloatY = 0.15f;         // 数值从躯干上浮，避开头顶HUD
 
-        private const float HpTextH = 0.30f;       // 血条上数值的目标世界高
-        private const float LabelTextH = 0.28f;
-        private const float StatTextH = 0.24f;
+        private const float HpTextH = 0.20f;
+        private const float LabelTextH = 0.25f;
+        private const float StatTextH = 0.14f;
         private const float ActionTextH = 0.36f;
-        private const float RingSize = 1.9f;       // 选中圆环目标世界直径
-        private const float RingY = -0.78f;        // 圆环 y（贴脚下）
 
         private const float FlashDur = 0.28f;      // 受击闪白时长
         private const float ShakeDur = 0.22f;      // 受击抖动时长
@@ -44,10 +41,12 @@ namespace CQ.Runtime
         private TextMeshPro _stat;
         private TextMeshPro _hpText;
         private TextMeshPro _action;
-        private TextMeshPro _status;
-        private Transform _frame;
-        private readonly SpriteRenderer[] _frameBars = new SpriteRenderer[4];
-        private SpriteRenderer _ring;              // 选中/可选目标圆环（素材 `按钮选中框.png`）
+        private readonly List<StatusIconView> _statusIcons = new List<StatusIconView>();
+        private SortingGroup _formationSorting;
+        private SpriteRenderer _shadow;
+        private bool _formationLifted;
+        private bool _formationTarget;
+        private Renderer[] _formationHudRenderers;
         private bool _teamTint;
 
         private SpriteRenderer _hpFill;
@@ -59,16 +58,27 @@ namespace CQ.Runtime
         private float _flashT;
         private float _shakeT;
         private Color _flashColor = Color.white;
-        private Vector3 _home;
+        private Vector3 _artScale;
+        private float _actionT;
+        private float _actionDuration;
+        private float _actionStrength;
+        private float _direction;
+        private bool _melee;
+        private Vector3 _approachOffset;
+        private int _idleSortOrder;
+        private bool _dead;
+        private float _deathAge;
 
         public string UnitId { get; private set; }
         public float PlaybackSpeed { get; set; } = 1f;
-        public bool FeedbackComplete => _flashT <= 0f && _shakeT <= 0f;
+        public bool FeedbackComplete => _flashT <= 0f && _shakeT <= 0f && _actionT <= 0f && (!_dead || _deathAge >= 0.45f);
 
         public void Setup(Unit unit, Color teamColor)
         {
             UnitId = unit.Id;
-            _home = transform.position;
+            _direction = unit.Team == Team.Player ? 1f : -1f;
+            string id = unit.Id?.Split('_')[0];
+            _melee = id == "sword" || id == "guard" || id == "grunt" || id == "claw" || id == "lord";
 
             var art = ArtLibrary.UnitSprite(unit.Id);
             _teamTint = art == null;
@@ -87,9 +97,10 @@ namespace CQ.Runtime
                 _sr.sprite = WhiteSprite();
                 _sr.color = teamColor;
             }
-            _sr.sortingOrder = unit.Row == "front" ? 10 : 5;
+            _artScale = artGo.transform.localScale;
+            _sr.sortingOrder = _idleSortOrder = unit.Row == "front" ? 10 : 5;
 
-            _action = TmpKit.MakeWorldText(transform, "ActionText", new Vector3(0f, 1.02f, 0f),
+            _action = TmpKit.MakeWorldText(transform, "ActionText", new Vector3(0f, 2.12f, 0f),
                 UiKit.FontBold, ActionTextH, Color.yellow, 55);
             TmpKit.SetOutline(_action, new Color(0f, 0f, 0f, 0.9f), 0.2f);
 
@@ -97,28 +108,43 @@ namespace CQ.Runtime
             _label = TmpKit.MakeWorldText(transform, "Label", new Vector3(0f, LabelY, 0f),
                 UiKit.FontBold, LabelTextH, Color.white, 55, FontStyles.Normal, unit.Name);
             TmpKit.SetOutline(_label, new Color(0f, 0f, 0f, 0.9f), 0.2f);
-            _status = TmpKit.MakeWorldText(transform, "StatusText", new Vector3(0f, StatY - 0.36f, 0f),
-                UiKit.Font, StatTextH, new Color(0.75f, 0.92f, 1f), 55);
-            TmpKit.SetOutline(_status, new Color(0f, 0f, 0f, 0.9f), 0.2f);
+            foreach (StatusType type in System.Enum.GetValues(typeof(StatusType)))
+                _statusIcons.Add(StatusIconView.Build(transform, type, _statusIcons.Count));
 
-            _frame = MakeFrame();
-            _ring = MakeRing();   // 有圆环素材时用圆环，方框仅作兜底
+            _formationSorting = gameObject.AddComponent<SortingGroup>();
+            _formationSorting.sortingOrder = 100;
+            _formationSorting.enabled = false;
+            var shadow = new GameObject("Shadow");
+            shadow.transform.SetParent(transform, false);
+            shadow.transform.localPosition = new Vector3(0f, -0.78f, 0f);
+            shadow.transform.localScale = new Vector3(0.85f, 0.18f, 1f);
+            _shadow = shadow.AddComponent<SpriteRenderer>();
+            _shadow.sprite = UiKit.CircleSprite();
+            _shadow.color = new Color(0.02f, 0.04f, 0.06f, 0.22f);
+            _shadow.sortingOrder = 2;
 
             var col = gameObject.AddComponent<BoxCollider2D>();
             col.size = new Vector2(ColliderW, ColliderH);
 
             Refresh(unit, "");
+            _formationHudRenderers = GetComponentsInChildren<Renderer>(true)
+                .Where(renderer => renderer != _sr && renderer != _shadow).ToArray();
         }
 
         public void SetPosition(Vector3 position, Unit unit)
         {
-            _home = position;
             transform.position = position;
             _shakeT = 0f;
-            if (_sr != null) _sr.sortingOrder = unit.Row == "front" ? 10 : 5;
+            _actionT = 0f;
+            _approachOffset = Vector3.zero;
+            if (_sr != null)
+            {
+                _sr.transform.localPosition = Vector3.zero;
+                _sr.sortingOrder = _idleSortOrder = unit.Row == "front" ? 10 : 5;
+            }
         }
 
-        public void Refresh(Unit unit, string actionText, string statusText = "")
+        public void Refresh(Unit unit, string actionText, IReadOnlyList<StatusEffect> statuses = null)
         {
             float hpRatio = unit.MaxHp > 0 ? (float)unit.Hp / unit.MaxHp : 0f;
             if (_hpFill != null)
@@ -148,19 +174,27 @@ namespace CQ.Runtime
                 TmpKit.FitWorldHeight(_stat, StatTextH);
             }
 
-            if (_status != null)
+            _ultFill.color = unit.Ult >= unit.MaxUlt && !unit.IsDead
+                ? new Color(1f, 0.82f, 0.22f) : new Color(0.20f, 0.66f, 1f);
+            int visible = 0;
+            foreach (var icon in _statusIcons)
             {
-                _status.text = unit.IsDead ? "" : statusText;
-                _status.gameObject.SetActive(!string.IsNullOrEmpty(_status.text));
-                FitReadableText(_status, StatTextH, 2.7f);
+                var status = unit.IsDead || statuses == null ? null : statuses.Where(s => s.Type == icon.Type)
+                    .OrderByDescending(s => s.Percent).FirstOrDefault();
+                icon.Refresh(status);
+                if (status != null)
+                    icon.SetSlot(visible++);
             }
 
-            if (_action != null)
-            {
-                _action.text = actionText;
-                _action.gameObject.SetActive(!string.IsNullOrEmpty(actionText));
-                FitReadableText(_action, ActionTextH, 2.7f);
-            }
+            SetActionText(actionText);
+        }
+
+        public void SetActionText(string actionText)
+        {
+            if (_action == null) return;
+            _action.text = actionText;
+            _action.gameObject.SetActive(!string.IsNullOrEmpty(actionText));
+            FitReadableText(_action, ActionTextH, 2.7f);
         }
 
         private static void FitReadableText(TextMeshPro text, float height, float maxWidth)
@@ -186,31 +220,62 @@ namespace CQ.Runtime
             if (hpDelta < 0) _shakeT = ShakeDur;
         }
 
+        /// <summary>近战接近本次实际目标再回位；返回命中前等待时间，包含在原有动作时长内。</summary>
+        public float PlayAction(string actionType, Vector3? targetPosition = null)
+        {
+            if (_dead || (actionType != "basic" && actionType != "special" && actionType != "ult")) return 0f;
+            bool approach = _melee && targetPosition.HasValue;
+            _actionDuration = actionType == "ult" ? 0.60f : approach ? (actionType == "special" ? 0.40f : 0.38f) :
+                actionType == "special" ? 0.34f : 0.24f;
+            _actionT = _actionDuration;
+            _actionStrength = actionType == "ult" ? 0.24f : actionType == "special" ? 0.16f : 0.10f;
+            _approachOffset = Vector3.zero;
+            if (approach)
+            {
+                Vector3 delta = targetPosition.Value - transform.position;
+                delta.z = 0f;
+                float distance = delta.magnitude;
+                if (distance > 0.9f)
+                    _approachOffset = transform.InverseTransformVector(delta * ((distance - 0.9f) / distance));
+            }
+            if (actionType != "basic")
+                BattleEffect.Spawn(this, "ring", actionType == "ult" ? new Color(1f, 0.79f, 0.20f) :
+                    new Color(0.28f, 0.78f, 1f), actionType == "ult" ? 1.25f : 0.85f);
+            return _approachOffset.sqrMagnitude > 0f ? _actionDuration * 0.35f : 0f;
+        }
+
         /// <summary>有示意图时保持原色（死亡转灰）；无图时用队伍色块。</summary>
         public void SetAppearance(Color teamColor, bool dead)
         {
             if (_sr == null) return;
-            if (dead) { _tint = new Color(0.35f, 0.35f, 0.35f, 0.85f); _sr.color = _tint; return; }
-            _tint = _teamTint ? teamColor : Color.white;
+            if (dead && !_dead) { _deathAge = 0f; _actionT = 0f; }
+            _dead = dead;
+            _tint = dead ? new Color(0.35f, 0.35f, 0.35f, 0.65f) : _teamTint ? teamColor : Color.white;
             if (_flashT <= 0f) _sr.color = _tint;
         }
 
-        /// <summary>0=无高亮，1=选中（黄），2=可作目标（青）。有圆环素材用脚下圆环，否则回退代码方框。</summary>
-        public void SetHighlight(int mode)
+        public void SetFormationFeedback(bool lifted, bool target)
         {
-            var c = mode == 1 ? new Color(1f, 0.85f, 0.2f) : new Color(0.3f, 0.9f, 1f);
-
-            if (_ring != null)
+            _formationLifted = lifted;
+            _formationTarget = target;
+            if (_formationSorting != null) _formationSorting.enabled = lifted;
+            if (_formationHudRenderers != null)
+                foreach (var renderer in _formationHudRenderers)
+                    if (renderer != null) renderer.forceRenderingOff = target;
+            if (_sr != null && _flashT <= 0f)
+                _sr.color = target ? new Color(_tint.r, _tint.g, _tint.b, _tint.a * 0.4f) : _tint;
+            if (_shadow != null)
             {
-                _ring.gameObject.SetActive(mode != 0);
-                if (mode != 0) _ring.color = c;
-                return;
+                _shadow.transform.localScale = lifted ? new Vector3(0.65f, 0.13f, 1f) : new Vector3(0.85f, 0.18f, 1f);
+                _shadow.color = new Color(0.02f, 0.04f, 0.06f, lifted ? 0.12f : 0.22f);
             }
+            UpdateMotion(0f);
+        }
 
-            if (_frame == null) return;
-            if (mode == 0) { _frame.gameObject.SetActive(false); return; }
-            _frame.gameObject.SetActive(true);
-            foreach (var b in _frameBars) if (b != null) b.color = c;
+        public void SetFormationInteraction(bool dragging)
+        {
+            if (dragging) SetActionText("");
+            foreach (var icon in _statusIcons) icon.SetInteractionSuppressed(dragging);
         }
 
         private void Update()
@@ -225,13 +290,7 @@ namespace CQ.Runtime
                 if (_flashT <= 0f) _sr.color = _tint;
             }
 
-            if (_shakeT > 0f)
-            {
-                _shakeT -= dt;
-                float k = Mathf.Clamp01(_shakeT / ShakeDur);
-                if (_shakeT <= 0f) transform.position = _home;
-                else transform.position = _home + new Vector3(Mathf.Sin(Time.time * 70f) * ShakeAmp * k, 0f, 0f);
-            }
+            UpdateMotion(dt);
 
             // 低血脉冲：≤30% 时血条呼吸，残血一眼可见
             if (_hpFill != null)
@@ -246,6 +305,27 @@ namespace CQ.Runtime
                     _hpFill.color = _hpColor;
                 }
             }
+        }
+
+        private void UpdateMotion(float dt)
+        {
+            _shakeT = Mathf.Max(0f, _shakeT - dt);
+            _actionT = Mathf.Max(0f, _actionT - dt);
+            if (_sr == null) return;
+            float progress = _actionDuration > 0f ? 1f - _actionT / _actionDuration : 1f;
+            float punch = _actionT > 0f ? Mathf.Sin(progress * Mathf.PI) : 0f;
+            float shake = _shakeT > 0f ? Mathf.Sin(Time.time * 70f) * ShakeAmp * (_shakeT / ShakeDur) : 0f;
+            _deathAge = _dead ? Mathf.Min(0.45f, _deathAge + dt) : 0f;
+            float fall = _dead ? _deathAge / 0.45f : 0f;
+            float travel = progress < 0.35f ? Mathf.SmoothStep(0f, 1f, progress / 0.35f) :
+                progress < 0.52f ? 1f : Mathf.SmoothStep(1f, 0f, (progress - 0.52f) / 0.48f);
+            Vector3 offset = _approachOffset.sqrMagnitude > 0f ? _approachOffset * travel :
+                new Vector3(_direction * punch * _actionStrength, 0f, 0f);
+            _sr.transform.localPosition = offset + new Vector3(shake, -0.18f * fall, 0f);
+            float formationScale = _formationLifted ? 1.08f : _formationTarget ? 1.035f : 1f;
+            _sr.transform.localScale = _artScale * formationScale * (1f + punch * _actionStrength * 0.35f - fall * 0.12f);
+            _sr.transform.localRotation = Quaternion.Euler(0f, 0f, -_direction * fall * 12f);
+            _sr.sortingOrder = _actionT > 0f && _approachOffset.sqrMagnitude > 0f ? 25 : _idleSortOrder;
         }
 
         // ---------- 构建 ----------
@@ -271,8 +351,8 @@ namespace CQ.Runtime
             MakeBar("UltBg", UltY, SubBgH, BarW, new Color(0.05f, 0.06f, 0.09f, 0.98f), 35);
             _ultFill = MakeBar("UltFill", UltY, SubFillH, BarW - BarInset, new Color(1f, 0.85f, 0.25f), 36);
 
-            _stat = TmpKit.MakeWorldText(transform, "StatText", new Vector3(0f, StatY, 0f),
-                UiKit.FontBold, StatTextH, new Color(0.75f, 0.92f, 1f), 55, FontStyles.Normal, "能量 0/0");
+            _stat = TmpKit.MakeWorldText(transform, "StatText", new Vector3(0f, UltY, 0f),
+                UiKit.FontBold, StatTextH, Color.white, 56, FontStyles.Normal, "能量 0/0");
             TmpKit.SetOutline(_stat, new Color(0f, 0f, 0f, 0.9f), 0.2f);
         }
 
@@ -301,49 +381,6 @@ namespace CQ.Runtime
             t.localPosition = p;
         }
 
-        private Transform MakeFrame()
-        {
-            var root = new GameObject("Highlight");
-            root.transform.SetParent(transform, false);
-            AddFrameBar(root.transform, 0, new Vector3(0f, FrameHalf, 0f), new Vector3(FrameFull, FrameThick, 1f));
-            AddFrameBar(root.transform, 1, new Vector3(0f, -FrameHalf, 0f), new Vector3(FrameFull, FrameThick, 1f));
-            AddFrameBar(root.transform, 2, new Vector3(-FrameHalf, 0f, 0f), new Vector3(FrameThick, FrameFull, 1f));
-            AddFrameBar(root.transform, 3, new Vector3(FrameHalf, 0f, 0f), new Vector3(FrameThick, FrameFull, 1f));
-            root.SetActive(false);
-            return root.transform;
-        }
-
-        /// <summary>脚下选中圆环（素材 `按钮选中框.png`）。素材缺失返回 null，调用方回退方框。</summary>
-        private SpriteRenderer MakeRing()
-        {
-            var sprite = ArtLibrary.RingSprite();
-            if (sprite == null) return null;
-
-            _frame.gameObject.SetActive(false);
-            var go = new GameObject("HighlightRing");
-            go.transform.SetParent(transform, false);
-            go.transform.localPosition = new Vector3(0f, RingY, 0f);
-            var sr = go.AddComponent<SpriteRenderer>();
-            sr.sprite = sprite;
-            sr.sortingOrder = 30;
-            FitSpriteHeight(go.transform, sprite, RingSize);
-            go.SetActive(false);
-            return sr;
-        }
-
-        private void AddFrameBar(Transform parent, int index, Vector3 localPos, Vector3 scale)
-        {
-            var go = new GameObject("Bar" + index);
-            go.transform.SetParent(parent, false);
-            go.transform.localPosition = localPos;
-            go.transform.localScale = scale;
-            var sr = go.AddComponent<SpriteRenderer>();
-            sr.sprite = WhiteSprite();
-            sr.color = Color.yellow;
-            sr.sortingOrder = 30;
-            _frameBars[index] = sr;
-        }
-
         private static void FitSpriteHeight(Transform t, Sprite s, float targetHeight)
         {
             float h = s.rect.height / Mathf.Max(1f, s.pixelsPerUnit);
@@ -351,7 +388,7 @@ namespace CQ.Runtime
             t.localScale = Vector3.one * Mathf.Clamp(k, 0.02f, 40f);
         }
 
-        private static Sprite WhiteSprite()
+        internal static Sprite WhiteSprite()
         {
             if (_white != null) return _white;
             var tex = new Texture2D(4, 4, TextureFormat.RGBA32, false);

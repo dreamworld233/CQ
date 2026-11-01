@@ -20,7 +20,6 @@ namespace CQ.Runtime
         public int PlaybackSpeed { get; private set; } = 1;
         public bool ResultVisible => _resultPanel != null && _resultPanel.activeSelf;
         public Button StartBattleButton;
-        public Button RestartButton;
         public Button NextLevelButton;
         public TextMeshProUGUI NextLevelLabel;
         public GameObject ErrorPanel;
@@ -85,9 +84,6 @@ namespace CQ.Runtime
             StartBattleButton.name = "StartBattleButton";
             Rect((RectTransform)StartBattleButton.transform, 1f, 0f, new Vector2(-36f, 36f), new Vector2(300f, 130f));
             StartBattleButton.onClick.AddListener(() => OnStartBattle?.Invoke());
-            RestartButton = UiKit.MakeButton(CanvasRect, "重开", 36, ButtonBg);
-            Rect((RectTransform)RestartButton.transform, 1f, 0f, new Vector2(-356f, 46f), new Vector2(180f, 90f));
-            RestartButton.onClick.AddListener(() => OnRestart?.Invoke());
             var mute = UiKit.MakeButton(CanvasRect, "音效：开", 22, ButtonBg);
             mute.name = "MuteButton";
             Rect((RectTransform)mute.transform, 1f, 0f, new Vector2(-36f, 180f), new Vector2(180f, 44f));
@@ -122,13 +118,13 @@ namespace CQ.Runtime
                 new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(1260f, 880f));
             panel.gameObject.AddComponent<Image>().color = PanelBg;
             WinnerText = UiKit.MakeText(panel, "", 56, new Color(1f, 0.85f, 0.3f), TextAnchor.MiddleCenter, true);
-            Rect((RectTransform)WinnerText.transform, 0.5f, 1f, new Vector2(0f, -24f), new Vector2(1140f, 74f));
+            Rect((RectTransform)WinnerText.transform, 0.5f, 1f, new Vector2(0f, -16f), new Vector2(1140f, 90f));
             SummaryText = UiKit.MakeText(panel, "", 26, Color.white, TextAnchor.MiddleCenter);
-            Rect((RectTransform)SummaryText.transform, 0.5f, 1f, new Vector2(0f, -110f), new Vector2(1140f, 100f));
+            Rect((RectTransform)SummaryText.transform, 0.5f, 1f, new Vector2(0f, -110f), new Vector2(1140f, 124f));
             SummaryText.enableWordWrapping = true;
             var statisticsButton = UiKit.MakeButton(panel, "查看战报", 28, ButtonBg);
             statisticsButton.name = "StatisticsButton";
-            Rect((RectTransform)statisticsButton.transform, 0.5f, 1f, new Vector2(0f, -225f), new Vector2(260f, 52f));
+            Rect((RectTransform)statisticsButton.transform, 0.5f, 1f, new Vector2(0f, -240f), new Vector2(260f, 52f));
             _statisticsLabel = statisticsButton.GetComponentInChildren<TextMeshProUGUI>();
             statisticsButton.onClick.AddListener(() => SetStatisticsVisible(!_report.gameObject.activeSelf));
             _report = BattleReportView.Build(panel);

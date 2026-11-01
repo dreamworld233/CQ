@@ -25,20 +25,26 @@ public class BattleFeedbackTests
             hero.skills[3].effects[0].duration = 0;
             hero.skills[3].effects[0].percent = 10;
             var engine = AutoBattleTestData.Engine(heroes: new[] { hero });
-            var controller = owner.AddComponent<BattleController>();
-            typeof(BattleController).GetField("_engine", BindingFlags.Instance | BindingFlags.NonPublic)
-                .SetValue(controller, engine);
-            var method = typeof(BattleController).GetMethod("UnitStatusText", BindingFlags.Instance | BindingFlags.NonPublic);
             var unit = engine.Players[0];
-            Assert.AreEqual("防+10%（常驻）", method.Invoke(controller, new object[] { unit }));
+            var view = owner.AddComponent<UnitView>();
+            view.Setup(unit, Color.white);
+            view.Refresh(unit, "", engine.Ctx.GetStatuses(unit.Id));
+            var icon = owner.GetComponentsInChildren<StatusIconView>(true).Single(i => i.Type == StatusType.DefenseUp);
+            Assert.AreEqual("防御 +10% · 常驻", icon.Description);
+            Assert.IsTrue(icon.transform.Find("Permanent").gameObject.activeSelf);
             var statuses = engine.Ctx.StatesOf(unit.Id);
             statuses.Apply(StatusType.DefenseUp, 25, 1);
-            Assert.AreEqual("防+25%（1次）", method.Invoke(controller, new object[] { unit }));
+            view.Refresh(unit, "", engine.Ctx.GetStatuses(unit.Id));
+            Assert.AreEqual("防御 +25% · 剩余 1 次行动", icon.Description);
+            Assert.IsFalse(icon.transform.Find("Permanent").gameObject.activeSelf);
+            Assert.AreEqual("1", icon.transform.Find("Duration").GetComponent<TextMeshPro>().text);
             statuses.BeginAction();
             statuses.CompleteAction();
-            Assert.AreEqual("防+10%（常驻）", method.Invoke(controller, new object[] { unit }));
+            view.Refresh(unit, "", engine.Ctx.GetStatuses(unit.Id));
+            Assert.AreEqual("防御 +10% · 常驻", icon.Description);
             unit.TakeDamage(unit.Hp);
-            Assert.AreEqual("", method.Invoke(controller, new object[] { unit }));
+            view.Refresh(unit, "", engine.Ctx.GetStatuses(unit.Id));
+            Assert.IsFalse(icon.gameObject.activeSelf);
         }
         finally { UnityEngine.Object.DestroyImmediate(owner); }
     }
@@ -187,23 +193,218 @@ public class BattleFeedbackTests
             };
             var view = owner.AddComponent<UnitView>();
             view.Setup(unit, Color.white);
-            view.Refresh(unit, "特殊 · 增益", "攻+25%（2次）");
+            view.Refresh(unit, "特殊 · 增益", new[] { new StatusEffect { Type = StatusType.AttackUp, Percent = 25, Duration = 2 } });
             var type = typeof(UnitView);
             var flags = BindingFlags.Instance | BindingFlags.NonPublic;
             var stat = (TextMeshPro)type.GetField("_stat", flags).GetValue(view);
             var action = (TextMeshPro)type.GetField("_action", flags).GetValue(view);
-            var status = (TextMeshPro)type.GetField("_status", flags).GetValue(view);
+            var status = owner.GetComponentsInChildren<StatusIconView>(true).Single(i => i.Type == StatusType.AttackUp);
             var energy = (SpriteRenderer)type.GetField("_ultFill", flags).GetValue(view);
             Assert.AreEqual("能量 20/100", stat.text);
             Assert.AreEqual("特殊 · 增益", action.text);
-            Assert.AreEqual("攻+25%（2次）", status.text);
+            Assert.AreEqual("攻击 +25% · 剩余 2 次行动", status.Description);
+            Assert.IsNull(owner.transform.Find("StatusText"));
+            Assert.Greater(owner.transform.Find("HpBg").localPosition.y, 0.75f);
+            Assert.Greater(owner.transform.Find("UltBg").localPosition.y, 0.75f);
+            Assert.Greater(status.transform.localPosition.y, owner.transform.Find("HpBg").localPosition.y);
             Assert.IsTrue(energy.gameObject.activeSelf);
             float partialWidth = energy.transform.localScale.x;
             unit.Ult = 100;
-            view.Refresh(unit, "终结技", "");
+            view.Refresh(unit, "终结技");
             Assert.Greater(energy.transform.localScale.x, partialWidth);
             Assert.AreEqual("能量 100/100", stat.text);
             Assert.IsFalse(status.gameObject.activeSelf);
+        }
+        finally { UnityEngine.Object.DestroyImmediate(owner); }
+    }
+
+    [Test]
+    public void StatusIconsUseDistinctShapesAndPolarity_AndReuseSlotsOnRefresh()
+    {
+        var owner = new GameObject("StatusIconsTest");
+        try
+        {
+            var unit = new Unit("sword", Team.Player) { Name = "剑士", Hp = 100, MaxHp = 100, MaxUlt = 100 };
+            var view = owner.AddComponent<UnitView>();
+            view.Setup(unit, Color.white);
+            var statuses = new[]
+            {
+                new StatusEffect { Type = StatusType.AttackUp, Percent = 10, Turn = "permanent" },
+                new StatusEffect { Type = StatusType.DefenseUp, Percent = 25, Duration = 2 },
+                new StatusEffect { Type = StatusType.Stun, Duration = 1 }
+            };
+            view.Refresh(unit, "", statuses);
+            Assert.Greater(StatusIconView.PositiveColor.r, StatusIconView.PositiveColor.b);
+            Assert.Greater(StatusIconView.NegativeColor.b, StatusIconView.NegativeColor.r);
+            var icons = owner.GetComponentsInChildren<StatusIconView>();
+            Assert.AreEqual(3, icons.Length);
+            Assert.AreEqual(3, icons.Select(i => i.transform.Find("Symbol").GetComponent<SpriteRenderer>().sprite).Distinct().Count());
+            foreach (var icon in icons)
+            {
+                Assert.AreEqual(icon.Type == StatusType.Stun ? StatusIconView.NegativeColor : StatusIconView.PositiveColor,
+                    icon.transform.Find("Tile").GetComponent<SpriteRenderer>().color);
+                Assert.IsFalse(icon.transform.Find("Detail").gameObject.activeSelf);
+            }
+            view.Refresh(unit, "", statuses);
+            CollectionAssert.AreEquivalent(icons, owner.GetComponentsInChildren<StatusIconView>());
+            view.Refresh(unit, "");
+            Assert.AreEqual(0, owner.GetComponentsInChildren<StatusIconView>().Length);
+        }
+        finally { UnityEngine.Object.DestroyImmediate(owner); }
+    }
+
+    [TestCase("basic", 0.24f)]
+    [TestCase("special", 0.34f)]
+    [TestCase("ult", 0.60f)]
+    [TestCase("passive", 0f)]
+    [TestCase("skipped", 0f)]
+    public void ActionMotionHasBoundedTierDurations_AndDoesNotMoveHudOrCollider(string action, float duration)
+    {
+        var owner = new GameObject("ActionMotionTest");
+        try
+        {
+            var unit = new Unit("sword", Team.Player) { Name = "剑士", Hp = 100, MaxHp = 100, MaxUlt = 100 };
+            var view = owner.AddComponent<UnitView>();
+            view.Setup(unit, Color.white);
+            var position = owner.transform.position;
+            var hpPosition = owner.transform.Find("HpBg").position;
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            view.PlayAction(action);
+            float remaining = (float)typeof(UnitView).GetField("_actionT", flags).GetValue(view);
+            Assert.AreEqual(duration, remaining);
+            Assert.AreEqual(duration == 0f, view.FeedbackComplete);
+            Assert.AreEqual(action == "special" || action == "ult", owner.GetComponentInChildren<BattleEffect>() != null);
+            if (duration > 0f) typeof(UnitView).GetField("_actionT", flags).SetValue(view, duration * 0.5f);
+            typeof(UnitView).GetMethod("UpdateMotion", flags).Invoke(view, new object[] { 0f });
+            Assert.AreEqual(position, owner.transform.position);
+            Assert.AreEqual(hpPosition, owner.transform.Find("HpBg").position);
+            Assert.AreEqual(Vector2.zero, owner.GetComponent<BoxCollider2D>().offset);
+            if (duration > 0f) Assert.AreNotEqual(Vector3.zero, owner.transform.Find("Art").localPosition);
+        }
+        finally { UnityEngine.Object.DestroyImmediate(owner); }
+    }
+
+    [TestCase("sword", Team.Player, "basic")]
+    [TestCase("sword", Team.Player, "ult")]
+    [TestCase("guard", Team.Player, "basic")]
+    [TestCase("grunt_0", Team.Enemy, "basic")]
+    [TestCase("claw_0", Team.Enemy, "special")]
+    [TestCase("lord_0", Team.Enemy, "ult")]
+    public void MeleeApproachesActualTargetAndReturns_WithoutMovingFormationOrHud(string id, Team team, string action)
+    {
+        var owner = new GameObject("MeleeApproachTest");
+        try
+        {
+            owner.transform.localScale = Vector3.one * 0.72f;
+            owner.transform.position = new Vector3(team == Team.Player ? -4f : 4f, -1f, 0f);
+            var home = owner.transform.position;
+            Vector3 target = new Vector3(-home.x, 2f, 0f);
+            var unit = new Unit(id, team) { Name = id, Hp = 100, MaxHp = 100, MaxUlt = 100, SlotId = "front1" };
+            var view = owner.AddComponent<UnitView>();
+            view.Setup(unit, Color.white);
+            var hp = owner.transform.Find("HpBg").position;
+            var art = owner.transform.Find("Art");
+            float delay = view.PlayAction(action, target);
+            Assert.Greater(delay, 0f);
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            float duration = (float)typeof(UnitView).GetField("_actionDuration", flags).GetValue(view);
+            typeof(UnitView).GetField("_actionT", flags).SetValue(view, duration * 0.60f);
+            typeof(UnitView).GetMethod("UpdateMotion", flags).Invoke(view, new object[] { 0f });
+            Assert.That(Vector3.Distance(art.position, target), Is.EqualTo(0.9f).Within(0.01f));
+            Assert.Greater(Vector3.Distance(art.position, home), 2f);
+            Assert.AreEqual(home, owner.transform.position);
+            Assert.AreEqual(hp, owner.transform.Find("HpBg").position);
+            Assert.AreEqual("front1", unit.SlotId);
+            Assert.AreEqual(25, art.GetComponent<SpriteRenderer>().sortingOrder);
+            typeof(UnitView).GetField("_actionT", flags).SetValue(view, 0f);
+            typeof(UnitView).GetMethod("UpdateMotion", flags).Invoke(view, new object[] { 0f });
+            Assert.That(art.localPosition.magnitude, Is.LessThan(0.0001f));
+            Assert.AreEqual(10, art.GetComponent<SpriteRenderer>().sortingOrder);
+            Assert.IsTrue(view.FeedbackComplete);
+        }
+        finally { UnityEngine.Object.DestroyImmediate(owner); }
+    }
+
+    [TestCase("mage", "basic", true)]
+    [TestCase("guard", "special", false)]
+    [TestCase("guard", "ult", false)]
+    [TestCase("sword", "skipped", true)]
+    public void RangedSupportAndSkippedActionsDoNotApproach(string id, string action, bool hasTarget)
+    {
+        var owner = new GameObject("StationaryActionTest");
+        try
+        {
+            var unit = new Unit(id, Team.Player) { Name = id, Hp = 100, MaxHp = 100, MaxUlt = 100 };
+            var view = owner.AddComponent<UnitView>();
+            view.Setup(unit, Color.white);
+            Assert.AreEqual(0f, view.PlayAction(action, hasTarget ? new Vector3(5f, 2f, 0f) : (Vector3?)null));
+            var offset = (Vector3)typeof(UnitView).GetField("_approachOffset", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(view);
+            Assert.AreEqual(Vector3.zero, offset);
+        }
+        finally { UnityEngine.Object.DestroyImmediate(owner); }
+    }
+
+    [Test]
+    public void InvalidatedApproachCannotPresentDamageFromPreviousBattle()
+    {
+        var owner = new GameObject("ApproachGenerationTest");
+        try
+        {
+            var hero = AutoBattleTestData.Hero("sword");
+            var enemy = AutoBattleTestData.Enemy();
+            hero.skills[3].trigger = enemy.skills[3].trigger = "permanent";
+            hero.skills[3].effects[0].duration = enemy.skills[3].effects[0].duration = 0;
+            var engine = AutoBattleTestData.Engine(heroes: new[] { hero }, enemies: new[] { enemy });
+            var controller = owner.AddComponent<BattleController>();
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            typeof(BattleController).GetField("_engine", flags).SetValue(controller, engine);
+            var views = (Dictionary<string, UnitView>)typeof(BattleController).GetField("_views", flags).GetValue(controller);
+            foreach (var unit in engine.Ctx.Units)
+            {
+                var go = new GameObject(unit.Id);
+                go.transform.SetParent(owner.transform);
+                go.transform.position = new Vector3(unit.Team == Team.Player ? -2f : 2f, 0f, 0f);
+                var view = go.AddComponent<UnitView>();
+                view.Setup(unit, Color.white);
+                views.Add(unit.Id, view);
+            }
+            var victim = engine.Ctx.Units.Single(u => u.Team == Team.Enemy);
+            string before = views[victim.Id].transform.Find("HpText").GetComponent<TextMeshPro>().text;
+            engine.StartBattle();
+            int generation = (int)typeof(BattleController).GetField("_generation", flags).GetValue(controller);
+            var drive = (IEnumerator)typeof(BattleController).GetMethod("Drive", flags).Invoke(controller, new object[] { engine, generation });
+            Assert.IsTrue(drive.MoveNext());
+            Assert.IsTrue(drive.MoveNext());
+            Assert.AreEqual("basic", engine.CurrentAction.ActionType);
+            Assert.AreEqual(before, views[victim.Id].transform.Find("HpText").GetComponent<TextMeshPro>().text);
+            Assert.AreEqual(0L, typeof(BattleController).GetField("_presentedSequence", flags).GetValue(controller));
+            typeof(BattleController).GetMethod("StopDriver", flags).Invoke(controller, null);
+            Assert.IsFalse(drive.MoveNext());
+            Assert.AreEqual(before, views[victim.Id].transform.Find("HpText").GetComponent<TextMeshPro>().text);
+        }
+        finally { UnityEngine.Object.DestroyImmediate(owner); }
+    }
+
+    [Test]
+    public void DeadUnitCannotStartAttack_AndClearsStatusDetails()
+    {
+        var owner = new GameObject("DeadMotionTest");
+        try
+        {
+            var unit = new Unit("sword", Team.Player) { Name = "剑士", Hp = 100, MaxHp = 100, MaxUlt = 100 };
+            var view = owner.AddComponent<UnitView>();
+            view.Setup(unit, Color.white);
+            view.Refresh(unit, "", new[] { new StatusEffect { Type = StatusType.Stun, Duration = 1 } });
+            var icon = owner.GetComponentInChildren<StatusIconView>();
+            typeof(StatusIconView).GetMethod("OnMouseDown", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(icon, null);
+            Assert.IsTrue(icon.transform.Find("Detail").gameObject.activeSelf);
+            unit.TakeDamage(100);
+            view.Refresh(unit, "");
+            view.SetAppearance(Color.white, true);
+            view.PlayAction("ult");
+            Assert.IsNull(owner.GetComponentInChildren<BattleEffect>());
+            Assert.IsFalse(icon.gameObject.activeSelf);
+            Assert.IsFalse(icon.transform.Find("Detail").gameObject.activeSelf);
         }
         finally { UnityEngine.Object.DestroyImmediate(owner); }
     }

@@ -5,7 +5,6 @@ using CQ.Core.Battle;
 using CQ.Core.Combat;
 using CQ.Core.Config;
 using UnityEngine;
-using UnityEngine.EventSystems;
 
 namespace CQ.Runtime
 {
@@ -15,7 +14,6 @@ namespace CQ.Runtime
         [SerializeField, Min(0f)] private float actionDuration = 0.42f;
         [SerializeField, Min(0f)] private float actionGap = 0.06f;
         [SerializeField] private BattleLayout layout = new BattleLayout();
-        [SerializeField] private bool verboseClick;
         private Coroutine _driver;
         private int _generation;
         private readonly List<LevelConfig> _levels = new List<LevelConfig>();
@@ -23,7 +21,7 @@ namespace CQ.Runtime
         private BattleEngine _engine;
         private readonly Dictionary<string, UnitView> _views = new Dictionary<string, UnitView>();
         private readonly Dictionary<string, string> _savedSlots = new Dictionary<string, string>();
-        private string _selectedActor;
+        private FormationDrag _formationDrag;
         private long _presentedSequence;
         private Transform _worldRoot;
         private Transform _slotRoot;
@@ -31,7 +29,6 @@ namespace CQ.Runtime
         private BattleUi _ui;
         private BattleAudio _audio;
         private bool _announcedWinner;
-        private const float TapRadius = 0.9f;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void EnsureControllerInScene()
@@ -45,6 +42,7 @@ namespace CQ.Runtime
             Screen.orientation = ScreenOrientation.LandscapeLeft;
             _cam = EnsureCamera();
             if (FindFirstObjectByType<AudioListener>() == null) _cam.gameObject.AddComponent<AudioListener>();
+            _formationDrag = gameObject.AddComponent<FormationDrag>();
             _audio = BattleAudio.Build(transform);
             _ui = BattleUi.Build(transform);
             _ui.OnMuteChanged = muted => _audio.SetMuted(muted);
@@ -58,8 +56,12 @@ namespace CQ.Runtime
 
         private void Update()
         {
-            if (Input.GetKeyDown(KeyCode.Escape)) Application.Quit();
-            if (_engine != null && _engine.Flow == BattleFlow.Setup) HandleUnitClick();
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                if (_formationDrag != null && (_formationDrag.IsDragging || _formationDrag.IsSettling))
+                    _formationDrag.CancelAndSnap();
+                else Application.Quit();
+            }
         }
 
         private Camera EnsureCamera()
@@ -79,66 +81,8 @@ namespace CQ.Runtime
             return cam;
         }
 
-        private void HandleUnitClick()
-        {
-            if (!Input.GetMouseButtonDown(0) || PointerOverUi()) return;
-            Vector2 point = _cam.ScreenToWorldPoint(Input.mousePosition);
-            if (_selectedActor != null)
-            {
-                foreach (var slot in _engine.Ctx.FormationOf(Team.Player).Slots)
-                {
-                    if (!SlotContainsPoint(slot.Id, point)) continue;
-                    if (_engine.TryMovePlayer(_selectedActor, slot.Id))
-                    {
-                        SaveFormation();
-                        foreach (var unit in _engine.Players)
-                            _views[unit.Id].SetPosition(PositioningView.Position(unit, layout), unit);
-                        RefreshWorld();
-                        RefreshSelection();
-                    }
-                    return;
-                }
-            }
-            var hit = PickUnitCollider(Physics2D.OverlapPointAll(point, Physics2D.AllLayers), point);
-            if (hit == null) hit = PickUnitCollider(Physics2D.OverlapCircleAll(point, TapRadius, Physics2D.AllLayers), point);
-            if (verboseClick) Debug.Log("[CQ.Click] world=" + point + " hit=" + (hit != null ? hit.name : "null"));
-            if (hit == null) return;
-            var view = hit.GetComponent<UnitView>();
-            var unitAtPoint = view != null ? _engine.Ctx.GetUnit(view.UnitId) : null;
-            if (unitAtPoint == null || unitAtPoint.IsDead || unitAtPoint.Team != Team.Player) return;
-            _selectedActor = unitAtPoint.Id;
-            _audio.Play(BattleSound.Select);
-            RefreshSelection();
-        }
-
         private Vector3 SlotTargetPosition(Team team, string slotId) =>
             PositioningView.Position(team, slotId, layout) + Vector3.down * (0.78f * 0.72f);
-
-        private bool SlotContainsPoint(string slotId, Vector2 point)
-        {
-            var delta = point - (Vector2)SlotTargetPosition(Team.Player, slotId);
-            return delta.x * delta.x / (0.48f * 0.48f) + delta.y * delta.y / (0.23f * 0.23f) <= 1f;
-        }
-
-        private static Collider2D PickUnitCollider(Collider2D[] hits, Vector2 point)
-        {
-            Collider2D best = null;
-            float bestSqr = float.MaxValue;
-            foreach (var hit in hits)
-            {
-                if (hit == null || hit.GetComponent<UnitView>() == null) continue;
-                float distance = (hit.bounds.center - (Vector3)point).sqrMagnitude;
-                if (distance < bestSqr) { bestSqr = distance; best = hit; }
-            }
-            return best;
-        }
-
-        private static bool PointerOverUi()
-        {
-            var es = EventSystem.current;
-            if (es == null) return false;
-            return Input.touchCount > 0 ? es.IsPointerOverGameObject(Input.GetTouch(0).fingerId) : es.IsPointerOverGameObject();
-        }
 
         private void SaveFormation()
         {
@@ -164,11 +108,11 @@ namespace CQ.Runtime
 
         private void NewBattle()
         {
+            _formationDrag?.Configure(_cam, null, layout, _views, _slotRoot, null);
             StopDriver();
             _audio?.StopPlayback();
             SaveFormation();
             _engine = null;
-            _selectedActor = null;
             _announcedWinner = false;
             _presentedSequence = 0;
             _ui.ResetBattleFeedback();
@@ -203,7 +147,7 @@ namespace CQ.Runtime
             RestoreFormation();
             SpawnWorld();
             RefreshWorld();
-            RefreshSelection();
+            RefreshSetup();
             RefreshHud();
         }
 
@@ -237,6 +181,11 @@ namespace CQ.Runtime
                 view.Setup(unit, UnitColor(unit));
                 _views[unit.Id] = view;
             }
+            _formationDrag.Configure(_cam, _engine, layout, _views, _slotRoot, () =>
+            {
+                SaveFormation();
+                _audio.Play(BattleSound.Select);
+            });
             ApplyPlaybackSpeed();
         }
 
@@ -261,20 +210,12 @@ namespace CQ.Runtime
                 if (!_views.TryGetValue(unit.Id, out var view)) continue;
                 string current = action != null && action.ActorId == unit.Id
                     ? ActionTypeLabel(action.ActionType) + " · " + action.ActionName : "";
-                view.Refresh(unit, current, UnitStatusText(unit));
+                view.Refresh(unit, current, _engine.Ctx.GetStatuses(unit.Id));
                 view.SetAppearance(UnitColor(unit), unit.IsDead);
             }
         }
 
-        private void RefreshSelection()
-        {
-            if (_engine == null) return;
-            bool setup = _engine.Flow == BattleFlow.Setup;
-            if (_slotRoot != null) _slotRoot.gameObject.SetActive(setup);
-            foreach (var unit in _engine.Ctx.Units)
-                if (_views.TryGetValue(unit.Id, out var view))
-                    view.SetHighlight(setup && unit.Id == _selectedActor ? 1 : 0);
-        }
+        private void RefreshSetup() => _formationDrag?.RefreshAvailability();
 
         private void RefreshHud()
         {
@@ -287,12 +228,12 @@ namespace CQ.Runtime
         private void StartBattleAction()
         {
             if (_engine == null || _engine.Flow != BattleFlow.Setup) return;
+            _formationDrag?.CancelAndSnap();
             SaveFormation();
             if (!_engine.StartBattle()) return;
-            _selectedActor = null;
             _audio.Play(BattleSound.Select);
             RefreshWorld();
-            RefreshSelection();
+            RefreshSetup();
             RefreshHud();
             EnsureDriver();
         }
@@ -313,15 +254,21 @@ namespace CQ.Runtime
             {
                 var result = engine.Advance();
                 if (result == null) break;
+                float approach = BeginActionPresentation(result);
+                if (approach > 0f)
+                {
+                    yield return WaitPlayback(approach);
+                    if (!IsCurrent(engine, generation)) yield break;
+                }
                 RefreshWorld();
                 ConsumeAction(result);
-                RefreshSelection();
+                RefreshSetup();
                 RefreshHud();
                 float duration = result.ActionType == "passive" ? 0.14f :
                     result.ActionType == "ult" ? Mathf.Max(actionDuration, 0.72f) : actionDuration;
                 if (result.UnitChanges.Any(change => !change.Before.IsDead && change.After.IsDead))
                     duration = Mathf.Max(duration, 0.65f);
-                yield return WaitPlayback(duration);
+                yield return WaitPlayback(Mathf.Max(0f, duration - approach));
                 if (!IsCurrent(engine, generation)) yield break;
                 while (_views.Values.Any(view => view != null && !view.FeedbackComplete))
                 {
@@ -334,7 +281,7 @@ namespace CQ.Runtime
             }
             if (!IsCurrent(engine, generation)) yield break;
             RefreshWorld();
-            RefreshSelection();
+            RefreshSetup();
             RefreshHud();
             if (engine.IsFinished)
             {
@@ -374,6 +321,17 @@ namespace CQ.Runtime
                 HasNextLevel() ? "下一关 → " + _levels[_levelIndex + 1].name : "", HasNextLevel());
         }
 
+        private float BeginActionPresentation(ActionResult result)
+        {
+            foreach (var pair in _views)
+                pair.Value.SetActionText(pair.Key == result.ActorId
+                    ? ActionTypeLabel(result.ActionType) + " · " + result.ActionName : "");
+            if (!_views.TryGetValue(result.ActorId, out var actor)) return 0f;
+            string targetId = result.HitTargetIds.FirstOrDefault(id => _views.ContainsKey(id));
+            Vector3? target = targetId != null ? _views[targetId].transform.position : (Vector3?)null;
+            return actor.PlayAction(result.ActionType, target);
+        }
+
         private void ConsumeAction(ActionResult result)
         {
             if (result.Sequence <= _presentedSequence) return;
@@ -381,35 +339,28 @@ namespace CQ.Runtime
             if (sound.HasValue) _audio.Play(sound.Value);
             string action = UnitName(result.ActorId) + "〔" + ActionTypeLabel(result.ActionType) + " · " + result.ActionName + "〕";
             if (result.ActionType == "ult") _ui.ShowFeedback(action, new Color(1f, 0.85f, 0.3f));
+            foreach (var target in result.Hits.Where(hit => hit.HpDamage > 0).Select(hit => hit.TargetUnitId).Distinct())
+                if (_views.TryGetValue(target, out var hitView))
+                    BattleEffect.Spawn(hitView, "slash", result.ActionType == "ult" ? new Color(1f, 0.8f, 0.25f) :
+                        Color.white, result.ActionType == "ult" ? 1.25f : 1f);
+            foreach (var target in result.Heals.Where(heal => heal.HpRestored > 0).Select(heal => heal.TargetUnitId).Distinct())
+                if (_views.TryGetValue(target, out var healedView))
+                    BattleEffect.Spawn(healedView, "heal", new Color(0.35f, 1f, 0.57f));
             foreach (var change in result.UnitChanges)
             {
-                if (change.HpDelta == 0) continue;
                 if (!_views.TryGetValue(change.UnitId, out var view)) continue;
+                var gainedStatuses = change.After.Statuses.Where(status => !change.Before.Statuses.Any(before =>
+                    before.Type == status.Type && before.Percent >= status.Percent &&
+                    (before.Turn == "permanent" || (status.Turn != "permanent" && before.Duration >= status.Duration)))).ToList();
+                if (!change.After.IsDead && gainedStatuses.Count > 0)
+                    BattleEffect.Spawn(view, "ring", gainedStatuses.Any(status => status.Type == StatusType.Stun)
+                        ? new Color(0.3f, 0.6f, 1f) : new Color(1f, 0.28f, 0.38f), 0.75f);
+                if (change.HpDelta == 0) continue;
                 view.FloatText((change.HpDelta > 0 ? "+" : "") + change.HpDelta,
                     change.HpDelta > 0 ? Color.green : Color.red, change.HpDelta);
                 view.Flash(change.HpDelta);
             }
             _presentedSequence = result.Sequence;
-        }
-
-        private string UnitStatusText(Unit unit)
-        {
-            if (unit.IsDead) return "";
-            var tags = new List<string>();
-            foreach (var status in _engine.Ctx.GetStatuses(unit.Id)
-                .GroupBy(status => status.Type).Select(group => group.OrderByDescending(status => status.Percent).First()))
-            {
-                string text;
-                switch (status.Type)
-                {
-                    case StatusType.AttackUp: text = "攻+" + status.Percent + "%"; break;
-                    case StatusType.DefenseUp: text = "防+" + status.Percent + "%"; break;
-                    case StatusType.Stun: text = "眩晕"; break;
-                    default: continue;
-                }
-                tags.Add(text + (status.Turn == "permanent" ? "（常驻）" : "（" + status.Duration + "次）"));
-            }
-            return string.Join(" ", tags);
         }
 
         private static string ActionTypeLabel(string type)
