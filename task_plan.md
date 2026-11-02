@@ -2,8 +2,8 @@
 
 - 用户已试玩认可脚下HUD/UI，实际第三关约10回合；授权现在提交并推送当前功能分支，下午继续。当前只做Git与收工记录，不继续开发/调数值/构建。
 - P1 核对I–O轮功能与保护范围、分离混合文件暂存：complete。47个功能/配置/测试/文档文件；背景接线仅留工作区，26个保护文件hash一致，暂存diff --check通过；新脚本meta仅清Unity默认空字段行尾空格。
-- P2 提交推送feat/card-injection-r2并核对远端：in_progress。
-- P3 保存下午恢复入口并停工：pending。
+- P2 提交推送feat/card-injection-r2并核对远端：complete，功能提交63b2396已推送origin/feat/card-injection-r2。先后遇OpenSSL证书链错误/直连443失败，读取系统已启用代理后用单次schannel+显式SSL验证+系统代理成功；未修改全局配置或关闭校验。
+- P3 保存下午恢复入口并停工：complete，本收工记录随文档提交同步同一功能分支；下午先恢复记录和Git状态，下一步由用户决定，不自动开发/配平/构建/合并main。
 - 仍保护临时背景/立绘及ArtLibrary/ArtLibraryTests接线、素材/参考图、两份字体SDF、本地版本号；不clean/restore、不自动合并main。BattleController分离暂存，不覆盖工作区。
 - 最新验证335项334通过/1失败，唯一失败为新克制下旧第三关20回合节奏基线，已如实说明且不放宽。200场均胜但默认站位16场>20/最长98；用户约10回合是实玩观察，不覆盖少数长局证据。
 
