@@ -4,6 +4,7 @@ using System.Linq;
 using CQ.Core.Battle;
 using CQ.Core.Combat;
 using CQ.Core.Config;
+using CQ.Runtime.App;
 using UnityEngine;
 
 namespace CQ.Runtime
@@ -30,23 +31,36 @@ namespace CQ.Runtime
         private BattleUi _ui;
         private BattleAudio _audio;
         private bool _announcedWinner;
-
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        private static void EnsureControllerInScene()
-        {
-            if (Object.FindFirstObjectByType<BattleController>() != null) return;
-            new GameObject("BattleController").AddComponent<BattleController>();
-        }
+        private GameSession _session;
+        public bool Initialized { get; private set; }
+        public bool CanCheckpoint => _engine != null && _party != null && _levels.Count > 0;
 
         private void Start()
         {
+            _session = GameApplication.Instance?.Session;
+            if (_session != null) seed = _session.Data.seed;
             Screen.orientation = ScreenOrientation.LandscapeLeft;
             _cam = EnsureCamera();
             if (FindFirstObjectByType<AudioListener>() == null) _cam.gameObject.AddComponent<AudioListener>();
             _formationDrag = gameObject.AddComponent<FormationDrag>();
             _audio = BattleAudio.Build(transform);
             _ui = BattleUi.Build(transform);
-            _ui.OnMuteChanged = muted => _audio.SetMuted(muted);
+            _ui.OnMuteChanged = muted =>
+            {
+                if (GameApplication.Instance != null)
+                {
+                    GameApplication.Instance.ChangeMute(muted);
+                    ApplySettings();
+                }
+                else _audio.SetMuted(muted);
+            };
+            if (GameApplication.Instance != null)
+            {
+                _ui.OnReturnToMenu = () => GameApplication.Instance.RequestReturn(this);
+                GameApplication.Instance.SettingsChanged += ApplySettings;
+                ApplySettings();
+                _ui.SetReturnAvailable(true);
+            }
             _ui.OnStartBattle = StartBattleAction;
             _ui.OnRestart = NewBattle;
             _ui.OnRetry = NewBattle;
@@ -56,6 +70,15 @@ namespace CQ.Runtime
             _formationDrag.OnInspect = InspectUnit;
             _formationDrag.OnDragStarted = () => { _ui.Skills.Hide(); HideHealth(); };
             NewBattle();
+            Initialized = true;
+        }
+
+        private void ApplySettings()
+        {
+            var settings = GameApplication.Instance.Settings;
+            _audio.SetVolume(settings.effectsVolume);
+            _audio.SetMuted(settings.muted);
+            _ui.SetMuted(settings.muted, false);
         }
 
         private void Update()
@@ -63,6 +86,7 @@ namespace CQ.Runtime
             UpdateCameraViewport();
             if (Input.GetKeyDown(KeyCode.Escape))
             {
+                if (GameApplication.Instance != null && GameApplication.Instance.BlocksBattleInput) return;
                 if (_ui != null && (_ui.Skills.Visible || _views.Values.Any(view => view != null && view.HealthVisible)))
                 {
                     _ui.Skills.Hide();
@@ -70,6 +94,7 @@ namespace CQ.Runtime
                 }
                 else if (_formationDrag != null && (_formationDrag.IsDragging || _formationDrag.IsSettling))
                     _formationDrag.CancelAndSnap();
+                else if (GameApplication.Instance != null) GameApplication.Instance.RequestReturn(this);
                 else Application.Quit();
             }
         }
@@ -100,6 +125,7 @@ namespace CQ.Runtime
             if (cam == null)
             {
                 cam = new GameObject("Main Camera").AddComponent<Camera>();
+                cam.transform.SetParent(transform, false);
                 cam.tag = "MainCamera";
             }
             cam.orthographic = true;
@@ -185,7 +211,41 @@ namespace CQ.Runtime
             _driver = null;
         }
 
-        private void OnDestroy() => StopDriver();
+        private void OnDestroy()
+        {
+            if (GameApplication.Instance != null) GameApplication.Instance.SettingsChanged -= ApplySettings;
+            StopDriver();
+        }
+
+        public void PrepareToLeave()
+        {
+            _formationDrag?.CancelAndSnap();
+            StopDriver();
+            _audio?.StopPlayback();
+        }
+
+        public bool SaveCheckpoint(out string error)
+        {
+            error = null;
+            if (_session == null) return true;
+            if (_engine == null || _party == null || _levels.Count == 0)
+            { error = "战斗尚未正确初始化，未改动原存档。"; return false; }
+            SaveFormation();
+            int levelId = _levels[_levelIndex].id;
+            int? completed = null;
+            if (_announcedWinner && _engine.Winner == Team.Player)
+            {
+                completed = levelId;
+                if (_levelIndex + 1 < _levels.Count) levelId = _levels[_levelIndex + 1].id;
+            }
+            bool saved = _session.SaveCheckpoint(levelId, _party.CaptureSave(), completed, out error);
+            _ui.SetSaveStatus(saved ? null : error);
+            return saved;
+        }
+
+        private void Checkpoint() => SaveCheckpoint(out _);
+        private void OnApplicationPause(bool paused) { if (paused) Checkpoint(); }
+        private void OnApplicationQuit() => Checkpoint();
 
         private void NewBattle()
         {
@@ -214,6 +274,12 @@ namespace CQ.Runtime
             _levels.Clear();
             _levels.AddRange(levels.items.OrderBy(level => level.id));
             if (_levels.Count == 0) { _ui.ShowError("无可用关卡"); return; }
+            if (_party == null && _session != null)
+            {
+                int savedIndex = _levels.FindIndex(item => item.id == _session.Data.levelId);
+                if (savedIndex < 0) { _ui.ShowError("存档关卡不存在，未改动原存档"); return; }
+                _levelIndex = savedIndex;
+            }
             _levelIndex = Mathf.Clamp(_levelIndex, 0, _levels.Count - 1);
             var level = _levels[_levelIndex];
             var catalog = enemies.items.ToDictionary(enemy => enemy.id);
@@ -227,6 +293,21 @@ namespace CQ.Runtime
             _ui.ClearError();
             var known = _party == null ? null : new HashSet<string>(_party.Available.Select(character => character.id));
             _party = new PartyRoster(chars.items, level.players, _party);
+            if (known == null && _session != null && _session.Data.partners.Length > 0)
+            {
+                try
+                {
+                    _party.RestoreSave(_session.Data.partners);
+                    var savedIds = new HashSet<string>(_session.Data.partners.Select(partner => partner.id));
+                    _newCompanion = _party.Available.FirstOrDefault(character => !savedIds.Contains(character.id))?.id;
+                }
+                catch (System.ArgumentException)
+                {
+                    _party = null;
+                    _ui.ShowError("存档阵容与当前关卡不兼容，未改动原存档");
+                    return;
+                }
+            }
             if (known != null)
                 _newCompanion = _party.Available.FirstOrDefault(character => !known.Contains(character.id))?.id ?? _newCompanion;
             _engine = BattleEngine.Create(seed + _levelIndex, chars.items, level, catalog, formation.items[0], _party.Deployment);
@@ -235,6 +316,7 @@ namespace CQ.Runtime
             RefreshWorld();
             RefreshSetup();
             RefreshHud();
+            Checkpoint();
         }
 
         private void SpawnWorld()
@@ -274,6 +356,7 @@ namespace CQ.Runtime
             _formationDrag.Configure(_cam, _engine, layout, _views, _slotRoot, () =>
             {
                 SaveFormation();
+                Checkpoint();
                 _audio.Play(BattleSound.Select);
             });
             ApplyPlaybackSpeed();
@@ -327,6 +410,11 @@ namespace CQ.Runtime
             HideHealth();
             _formationDrag?.CancelAndSnap();
             SaveFormation();
+            if (!SaveCheckpoint(out var saveError))
+            {
+                GameApplication.Instance?.Overlay.Notice("开战前保存失败", saveError + "\n请检查存储空间后重试。");
+                return;
+            }
             if (!_engine.StartBattle()) return;
             layout.setupSpread = 0f;
             foreach (var unit in _engine.Ctx.Units)
@@ -410,6 +498,7 @@ namespace CQ.Runtime
             HideHealth();
             if (_announcedWinner) return;
             _announcedWinner = true;
+            Checkpoint();
             bool won = _engine.Winner == Team.Player;
             var rows = BattleStatistics.Summarize(_engine);
             var allies = rows.Where(row => row.Team == Team.Player).ToList();

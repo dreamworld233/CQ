@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using CQ.Core.Combat;
 using CQ.Core.Config;
+using CQ.Core.Persistence;
 
 namespace CQ.Core.Battle
 {
@@ -34,6 +35,28 @@ namespace CQ.Core.Battle
             Deployment = new ReadOnlyDictionary<string, string>(_deployed);
             if (previous == null)
                 foreach (var character in available.Take(Formation.Capacity)) TryToggle(character.id, out _);
+        }
+
+        public PartnerSave[] CaptureSave() => Available.Select(character => new PartnerSave
+        {
+            id = character.id, slot = _remembered[character.id], deployed = _deployed.ContainsKey(character.id)
+        }).ToArray();
+
+        public void RestoreSave(IEnumerable<PartnerSave> records)
+        {
+            if (records == null) throw new ArgumentNullException(nameof(records));
+            var saved = records.ToArray();
+            if (saved.Any(p => p == null || !_remembered.ContainsKey(p.id) || !Formation.IsValidSlot(p.slot)) ||
+                saved.Select(p => p.id).Distinct().Count() != saved.Length ||
+                saved.Count(p => p.deployed) > Formation.Capacity ||
+                saved.Where(p => p.deployed).Select(p => p.slot).Distinct().Count() != saved.Count(p => p.deployed))
+                throw new ArgumentException("存档伙伴或站位与当前关卡不兼容", nameof(records));
+            _deployed.Clear();
+            foreach (var record in saved)
+            {
+                _remembered[record.id] = record.slot;
+                if (record.deployed) _deployed[record.id] = record.slot;
+            }
         }
 
         public bool IsDeployed(string id) => id != null && _deployed.ContainsKey(id);

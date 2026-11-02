@@ -32,6 +32,8 @@ namespace CQ.Runtime
             return audio;
         }
 
+        public void SetVolume(float volume) => _source.volume = 0.25f * Mathf.Clamp01(volume);
+
         public void SetMuted(bool muted)
         {
             _source.mute = muted;

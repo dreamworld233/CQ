@@ -31,6 +31,12 @@ namespace CQ.Runtime
         public Action OnRestart;
         public Action OnNextLevel;
         public Action OnRetry;
+        public Action OnReturnToMenu;
+        private Button _returnButton;
+        private Button _resultReturnButton;
+        private Button _errorReturnButton;
+        private TextMeshProUGUI _saveStatus;
+        private bool _returnAvailable;
         public Action<bool> OnMuteChanged;
         public bool Muted { get; private set; }
         private TextMeshProUGUI _muteLabel;
@@ -65,6 +71,15 @@ namespace CQ.Runtime
             Roster = RosterView.Build(CanvasRect);
             Skills = SkillDetailsView.Build(CanvasRect);
             Elements = ElementGuideView.Build(CanvasRect);
+            _returnButton = UiKit.MakeButton(CanvasRect, "返回主菜单", 24, ButtonBg);
+            _returnButton.name = "ReturnToMenuButton";
+            Rect((RectTransform)_returnButton.transform, 0.5f, 1f, new Vector2(-440f, -22f), new Vector2(220f, 60f));
+            _returnButton.onClick.AddListener(() => OnReturnToMenu?.Invoke());
+            _returnButton.gameObject.SetActive(false);
+            _saveStatus = UiKit.MakeText(CanvasRect, "", 22, new Color(1f, 0.65f, 0.4f), TextAnchor.MiddleCenter);
+            _saveStatus.name = "SaveStatus";
+            _saveStatus.overflowMode = TextOverflowModes.Ellipsis;
+            Rect((RectTransform)_saveStatus.transform, 0.5f, 1f, new Vector2(0f, -90f), new Vector2(800f, 55f));
             BuildResultPanel();
             BuildErrorPanel();
         }
@@ -153,6 +168,11 @@ namespace CQ.Runtime
             _resultRestart.name = "ResultRestartButton";
             Rect((RectTransform)_resultRestart.transform, 0.5f, 0f, new Vector2(-270f, 30f), new Vector2(300f, 80f));
             _resultRestart.onClick.AddListener(() => OnRestart?.Invoke());
+            _resultReturnButton = UiKit.MakeButton(panel, "返回主菜单", 28, ButtonBg);
+            _resultReturnButton.name = "ResultReturnToMenuButton";
+            Rect((RectTransform)_resultReturnButton.transform, 0.5f, 0f, new Vector2(390f, 30f), new Vector2(300f, 80f));
+            _resultReturnButton.onClick.AddListener(() => OnReturnToMenu?.Invoke());
+            _resultReturnButton.gameObject.SetActive(false);
             NextLevelButton.gameObject.SetActive(false);
             SetStatisticsVisible(false);
             _resultPanel.SetActive(false);
@@ -177,7 +197,14 @@ namespace CQ.Runtime
             SetStatisticsVisible(false);
             NextLevelLabel.text = nextLabel;
             NextLevelButton.gameObject.SetActive(hasNext);
-            ((RectTransform)_resultRestart.transform).anchoredPosition = new Vector2(hasNext ? -270f : 0f, 30f);
+            if (_returnAvailable)
+            {
+                ((RectTransform)_resultRestart.transform).anchoredPosition = new Vector2(hasNext ? -390f : -180f, 30f);
+                ((RectTransform)NextLevelButton.transform).anchoredPosition = new Vector2(0f, 30f);
+                ((RectTransform)NextLevelButton.transform).sizeDelta = new Vector2(340f, 80f);
+                ((RectTransform)_resultReturnButton.transform).anchoredPosition = new Vector2(hasNext ? 390f : 180f, 30f);
+            }
+            else ((RectTransform)_resultRestart.transform).anchoredPosition = new Vector2(hasNext ? -270f : 0f, 30f);
             _resultPanel.SetActive(true);
         }
 
@@ -198,6 +225,10 @@ namespace CQ.Runtime
             var retry = UiKit.MakeButton(panel, "重试加载", 40, ButtonBg);
             Rect((RectTransform)retry.transform, 0.5f, 0.5f, new Vector2(0f, -100f), new Vector2(300f, 110f));
             retry.onClick.AddListener(() => OnRetry?.Invoke());
+            _errorReturnButton = UiKit.MakeButton(panel, "返回主菜单", 30, ButtonBg);
+            Rect((RectTransform)_errorReturnButton.transform, 0.5f, 0.5f, new Vector2(0f, -260f), new Vector2(300f, 80f));
+            _errorReturnButton.onClick.AddListener(() => OnReturnToMenu?.Invoke());
+            _errorReturnButton.gameObject.SetActive(false);
             ErrorPanel.SetActive(false);
         }
 
@@ -234,11 +265,21 @@ namespace CQ.Runtime
             HideResult();
         }
 
-        public void SetMuted(bool muted)
+        public void SetReturnAvailable(bool available)
+        {
+            _returnAvailable = available;
+            _returnButton.gameObject.SetActive(available);
+            _resultReturnButton.gameObject.SetActive(available);
+            _errorReturnButton.gameObject.SetActive(available);
+        }
+
+        public void SetSaveStatus(string error) => _saveStatus.text = error == null ? "" : "保存失败 · " + error;
+
+        public void SetMuted(bool muted, bool notify = true)
         {
             Muted = muted;
             _muteLabel.text = muted ? "音效：关" : "音效：开";
-            OnMuteChanged?.Invoke(muted);
+            if (notify) OnMuteChanged?.Invoke(muted);
         }
 
         public void ShowFeedback(string text, Color color)
