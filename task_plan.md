@@ -2,8 +2,8 @@
 
 - 用户确认当前无问题，授权保存进度、提交并推送功能分支；后续有新点子再优化。本次仅Git与收工记录，不继续开发/测试/构建/配平。
 - S1 核对P/Q/R轮功能与保护范围、分离混合文件暂存：complete。30文件，暂存diff --check通过，27个保护文件内容hash一致，背景接线及其回归只留工作区。
-- S2 提交推送feat/card-injection-r2并核对远端：in_progress。
-- S3 保存本次推送事实与下次恢复入口、停工：pending。
+- S2 提交推送feat/card-injection-r2并核对远端：complete，功能提交243c4d3已推送origin/feat/card-injection-r2。
+- S3 保存本次推送事实与下次恢复入口、停工：complete，本收工记录随独立文档提交同步功能分支。后续先恢复记录/Git状态，再由用户提出新点子，不后台开发/测试/构建。
 - 保护本地立绘/背景及接线、参考图、字体缓存和本地版本号；BattleController和新增ElementFeedbackTests中的背景回归仅拆索引，不覆盖工作区。不合并main、不clean/restore。
 - 最新本地正式363/363通过；第三关200场默认84胜16超时、护卫单前排100胜，实际Play见progress.md。拆分提交不冒充另一次独立远端版本测试；暂停后由用户指定新优化点。
 
