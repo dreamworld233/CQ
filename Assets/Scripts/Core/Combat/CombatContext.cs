@@ -70,7 +70,7 @@ namespace CQ.Core.Combat
 
         internal void RecordHit(Unit source, Unit target, int damage)
         {
-            _hits?.Add(new AttackHit(source.Id, target.Id, damage, target.IsDead));
+            _hits?.Add(new AttackHit(source, target, damage));
         }
 
         public void Heal(Unit source, Unit target, int amount)

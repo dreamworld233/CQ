@@ -23,7 +23,9 @@ namespace CQ.Core.Battle
         private readonly Rng _rng;
         private readonly Func<Unit, int> _speedOf;
 
+        public const int RoundLimit = 20;
         public int Round { get; private set; }
+        public bool RoundLimitReached { get; private set; }
         public BattlePhase Phase { get; private set; } = BattlePhase.Idle;
         public bool IsFinished { get; private set; }
         public Team? Winner { get; private set; }
@@ -70,13 +72,18 @@ namespace CQ.Core.Battle
 
         public void CompleteRound()
         {
-            if (!IsFinished && Phase == BattlePhase.Acting) Phase = BattlePhase.RoundEnd;
+            if (!IsFinished && Phase == BattlePhase.Acting)
+            {
+                Phase = BattlePhase.RoundEnd;
+                ResolveWin();
+            }
         }
 
         public void CheckWinner() => ResolveWin();
 
         private void ResolveWin()
         {
+            if (IsFinished) return;
             if (AllEnemiesDead)
             {
                 IsFinished = true;
@@ -86,6 +93,12 @@ namespace CQ.Core.Battle
             {
                 IsFinished = true;
                 Winner = Team.Enemy;
+            }
+            if (!IsFinished && Phase == BattlePhase.RoundEnd && Round >= RoundLimit)
+            {
+                IsFinished = true;
+                Winner = Team.Enemy;
+                RoundLimitReached = true;
             }
             if (IsFinished)
             {

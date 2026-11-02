@@ -202,18 +202,8 @@ namespace CQ.Runtime
             outline.effectDistance = Vector2.one * 2f;
         }
 
-        public static Color ElementColor(string element)
-        {
-            switch (element)
-            {
-                case "metal": return new Color(0.95f, 0.97f, 1f);
-                case "wood": return new Color(0.35f, 0.82f, 0.46f);
-                case "water": return new Color(0.30f, 0.62f, 1f);
-                case "fire": return new Color(0.98f, 0.30f, 0.29f);
-                case "earth": return new Color(1f, 0.83f, 0.26f);
-                default: return Color.gray;
-            }
-        }
+        public static Color ElementColor(string element) => CharacterElements.IsValid(element)
+            ? ElementPresentation.ColorOf(element) : Color.gray;
 
         private static Sprite Portrait(string id)
         {

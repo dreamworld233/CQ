@@ -23,6 +23,7 @@ namespace CQ.Core.Battle
         public int Round => _turns.Round;
         public int CurrentRound => Math.Max(1, Round);
         public bool IsFinished => _turns.IsFinished;
+        public bool RoundLimitReached => _turns.RoundLimitReached;
         public Team? Winner => _turns.Winner;
         public Guid BattleId { get; } = Guid.NewGuid();
         public ActionResult CurrentAction { get; private set; }

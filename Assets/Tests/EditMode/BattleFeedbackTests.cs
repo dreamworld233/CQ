@@ -78,6 +78,52 @@ public class BattleFeedbackTests
         finally { UnityEngine.Object.DestroyImmediate(owner); }
     }
 
+    [TestCase("special")]
+    [TestCase("ult")]
+    public void SkillPresentationKeepsDamageButDoesNotAnnounceSkillNames(string actionType)
+    {
+        var owner = new GameObject("NoSkillAnnouncementTest");
+        var previous = EventSystem.current;
+        try
+        {
+            var hero = AutoBattleTestData.Hero("sword");
+            var engine = AutoBattleTestData.Engine(heroes: new[] { hero });
+            if (actionType == "ult") engine.Players[0].GainUlt(100);
+            engine.StartBattle();
+            var result = BattleTestDriver.NextAction(engine, "sword");
+            if (actionType == "special") result = BattleTestDriver.NextAction(engine, "sword");
+            Assert.AreEqual(actionType, result.ActionType);
+            var controller = owner.AddComponent<BattleController>();
+            var ui = BattleUi.Build(owner.transform);
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            if (ui.CanvasRect == null) typeof(BattleUi).GetMethod("BuildAll", flags).Invoke(ui, null);
+            typeof(BattleController).GetField("_engine", flags).SetValue(controller, engine);
+            typeof(BattleController).GetField("_ui", flags).SetValue(controller, ui);
+            typeof(BattleController).GetField("_audio", flags).SetValue(controller, BattleAudio.Build(owner.transform));
+            var views = (Dictionary<string, UnitView>)typeof(BattleController).GetField("_views", flags).GetValue(controller);
+            foreach (var unit in engine.Ctx.Units)
+            {
+                var go = new GameObject(unit.Id);
+                go.transform.SetParent(owner.transform);
+                var view = go.AddComponent<UnitView>();
+                view.Setup(unit, Color.white);
+                views.Add(unit.Id, view);
+            }
+            typeof(BattleController).GetMethod("RefreshWorld", flags).Invoke(controller, null);
+            typeof(BattleController).GetMethod("BeginActionPresentation", flags).Invoke(controller, new object[] { result });
+            typeof(BattleController).GetMethod("ConsumeAction", flags).Invoke(controller, new object[] { result });
+            Assert.AreEqual("", ui.CanvasRect.Find("FeedbackText").GetComponent<TextMeshProUGUI>().text);
+            Assert.IsTrue(views.Values.All(view => view.transform.Find("Hud/ActionText") == null));
+            Assert.Greater(owner.GetComponentsInChildren<FloatingText>().Length, 0, "保留实际伤害飘字");
+            Assert.IsFalse(views["sword"].FeedbackComplete, "现有出手动作仍应播放");
+        }
+        finally
+        {
+            UnityEngine.Object.DestroyImmediate(owner);
+            if (previous == null && EventSystem.current != null) UnityEngine.Object.DestroyImmediate(EventSystem.current.gameObject);
+        }
+    }
+
     [Test]
     public void DisablingViewCancelsRemainingHitFeedback()
     {
@@ -108,22 +154,22 @@ public class BattleFeedbackTests
             var unit = engine.Players[0];
             var view = owner.AddComponent<UnitView>();
             view.Setup(unit, Color.white);
-            view.Refresh(unit, "", engine.Ctx.GetStatuses(unit.Id));
+            view.Refresh(unit, engine.Ctx.GetStatuses(unit.Id));
             var icon = owner.GetComponentsInChildren<StatusIconView>(true).Single(i => i.Type == StatusType.DefenseUp);
             Assert.AreEqual("防御 +10% · 常驻", icon.Description);
             Assert.IsTrue(icon.transform.Find("Permanent").gameObject.activeSelf);
             var statuses = engine.Ctx.StatesOf(unit.Id);
             statuses.Apply(StatusType.DefenseUp, 25, 1);
-            view.Refresh(unit, "", engine.Ctx.GetStatuses(unit.Id));
+            view.Refresh(unit, engine.Ctx.GetStatuses(unit.Id));
             Assert.AreEqual("防御 +25% · 剩余 1 次行动", icon.Description);
             Assert.IsFalse(icon.transform.Find("Permanent").gameObject.activeSelf);
             Assert.AreEqual("1", icon.transform.Find("Duration").GetComponent<TextMeshPro>().text);
             statuses.BeginAction();
             statuses.CompleteAction();
-            view.Refresh(unit, "", engine.Ctx.GetStatuses(unit.Id));
+            view.Refresh(unit, engine.Ctx.GetStatuses(unit.Id));
             Assert.AreEqual("防御 +10% · 常驻", icon.Description);
             unit.TakeDamage(unit.Hp);
-            view.Refresh(unit, "", engine.Ctx.GetStatuses(unit.Id));
+            view.Refresh(unit, engine.Ctx.GetStatuses(unit.Id));
             Assert.IsFalse(icon.gameObject.activeSelf);
         }
         finally { UnityEngine.Object.DestroyImmediate(owner); }
@@ -262,7 +308,7 @@ public class BattleFeedbackTests
 
     [TestCase(Team.Player)]
     [TestCase(Team.Enemy)]
-    public void UnitViewShowsEnergyForBothTeams_AndSeparatesCurrentActionFromStatuses(Team team)
+    public void UnitViewShowsEnergyAndStatusesForBothTeams_WithoutSkillAnnouncements(Team team)
     {
         var owner = new GameObject("UnitViewTest");
         try
@@ -273,15 +319,15 @@ public class BattleFeedbackTests
             };
             var view = owner.AddComponent<UnitView>();
             view.Setup(unit, Color.white);
-            view.Refresh(unit, "特殊 · 增益", new[] { new StatusEffect { Type = StatusType.AttackUp, Percent = 25, Duration = 2 } });
+            view.Refresh(unit, new[] { new StatusEffect { Type = StatusType.AttackUp, Percent = 25, Duration = 2 } });
             var type = typeof(UnitView);
             var flags = BindingFlags.Instance | BindingFlags.NonPublic;
             var stat = (TextMeshPro)type.GetField("_stat", flags).GetValue(view);
-            var action = (TextMeshPro)type.GetField("_action", flags).GetValue(view);
+            Assert.IsNull(owner.transform.Find("Hud/ActionText"));
+            Assert.IsNull(type.GetMethod("SetActionText"));
             var status = owner.GetComponentsInChildren<StatusIconView>(true).Single(i => i.Type == StatusType.AttackUp);
             var energy = (SpriteRenderer)type.GetField("_ultFill", flags).GetValue(view);
             Assert.AreEqual("能量 20/100", stat.text);
-            Assert.AreEqual("特殊 · 增益", action.text);
             Assert.AreEqual("攻击 +25% · 剩余 2 次行动", status.Description);
             Assert.IsNull(owner.transform.Find("StatusText"));
             var hud = owner.transform.Find("Hud");
@@ -294,7 +340,7 @@ public class BattleFeedbackTests
             Assert.IsTrue(energy.gameObject.activeSelf);
             float partialWidth = energy.transform.localScale.x;
             unit.Ult = 100;
-            view.Refresh(unit, "终结技");
+            view.Refresh(unit);
             Assert.Greater(energy.transform.localScale.x, partialWidth);
             Assert.AreEqual("能量 100/100", stat.text);
             Assert.IsFalse(status.gameObject.activeSelf);
@@ -323,7 +369,7 @@ public class BattleFeedbackTests
                         { Name = "布局验证", Hp = 100, MaxHp = 100, Ult = 20, MaxUlt = 100, SlotId = slot };
                     var view = go.AddComponent<UnitView>();
                     view.Setup(unit, Color.white);
-                    view.Refresh(unit, "特殊 · 连斩", new[] {
+                    view.Refresh(unit, new[] {
                         new StatusEffect { Type = StatusType.AttackUp, Percent = 10, Turn = "permanent" },
                         new StatusEffect { Type = StatusType.DefenseUp, Percent = 20, Duration = 2 },
                         new StatusEffect { Type = StatusType.Stun, Duration = 1 }
@@ -363,7 +409,7 @@ public class BattleFeedbackTests
                 new StatusEffect { Type = StatusType.DefenseUp, Percent = 25, Duration = 2 },
                 new StatusEffect { Type = StatusType.Stun, Duration = 1 }
             };
-            view.Refresh(unit, "", statuses);
+            view.Refresh(unit, statuses);
             Assert.Greater(StatusIconView.PositiveColor.r, StatusIconView.PositiveColor.b);
             Assert.Greater(StatusIconView.NegativeColor.b, StatusIconView.NegativeColor.r);
             var icons = owner.GetComponentsInChildren<StatusIconView>();
@@ -375,9 +421,9 @@ public class BattleFeedbackTests
                     icon.transform.Find("Tile").GetComponent<SpriteRenderer>().color);
                 Assert.IsFalse(icon.transform.Find("Detail").gameObject.activeSelf);
             }
-            view.Refresh(unit, "", statuses);
+            view.Refresh(unit, statuses);
             CollectionAssert.AreEquivalent(icons, owner.GetComponentsInChildren<StatusIconView>());
-            view.Refresh(unit, "");
+            view.Refresh(unit);
             Assert.AreEqual(0, owner.GetComponentsInChildren<StatusIconView>().Length);
         }
         finally { UnityEngine.Object.DestroyImmediate(owner); }
@@ -524,12 +570,12 @@ public class BattleFeedbackTests
             var unit = new Unit("sword", Team.Player) { Name = "剑士", Hp = 100, MaxHp = 100, MaxUlt = 100 };
             var view = owner.AddComponent<UnitView>();
             view.Setup(unit, Color.white);
-            view.Refresh(unit, "", new[] { new StatusEffect { Type = StatusType.Stun, Duration = 1 } });
+            view.Refresh(unit, new[] { new StatusEffect { Type = StatusType.Stun, Duration = 1 } });
             var icon = owner.GetComponentInChildren<StatusIconView>();
             typeof(StatusIconView).GetMethod("OnMouseDown", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(icon, null);
             Assert.IsTrue(icon.transform.Find("Detail").gameObject.activeSelf);
             unit.TakeDamage(100);
-            view.Refresh(unit, "");
+            view.Refresh(unit);
             view.SetAppearance(Color.white, true);
             view.PlayAction("ult");
             Assert.IsNull(owner.GetComponentInChildren<BattleEffect>());

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using CQ.Core.Config;
 using CQ.Core.Combat;
 using TMPro;
 using UnityEngine;
@@ -25,10 +26,9 @@ namespace CQ.Runtime
         private const float LabelY = 0.12f;
         private const float FloatY = 0.15f;         // 数值保留在角色躯干，避开脚下HUD
 
-        private const float HpTextH = 0.20f;
+        private const float HpTextH = 0.32f;
         private const float LabelTextH = 0.25f;
         private const float StatTextH = 0.14f;
-        private const float ActionTextH = 0.36f;
 
         private const float FlashDur = 0.28f;      // 受击闪白时长
         private const float ShakeDur = 0.22f;      // 受击抖动时长
@@ -41,7 +41,9 @@ namespace CQ.Runtime
         private TextMeshPro _label;
         private TextMeshPro _stat;
         private TextMeshPro _hpText;
-        private TextMeshPro _action;
+        private float _healthRemaining;
+        public bool HealthVisible => _hpText != null && _hpText.gameObject.activeSelf;
+        private SpriteRenderer _elementIcon;
         private readonly List<StatusIconView> _statusIcons = new List<StatusIconView>();
         private SortingGroup _formationSorting;
         private SpriteRenderer _shadow;
@@ -75,6 +77,8 @@ namespace CQ.Runtime
         private int _hitIndex;
         private bool _multiHit;
         private bool _ultimateHit;
+        private Color _damageColor = Color.white;
+        private string _damageLabel = "";
 
         public string UnitId { get; private set; }
         public float PlaybackSpeed { get; set; } = 1f;
@@ -111,9 +115,6 @@ namespace CQ.Runtime
             _hud = new GameObject("Hud").transform;
             _hud.SetParent(transform, false);
             _hud.localPosition = new Vector3(0f, -1.08f, 0f);
-            _action = TmpKit.MakeWorldText(_hud, "ActionText", new Vector3(0f, -1.30f, 0f),
-                UiKit.FontBold, ActionTextH, Color.yellow, 55);
-            TmpKit.SetOutline(_action, new Color(0f, 0f, 0f, 0.9f), 0.2f);
 
             MakeBars();
             _label = TmpKit.MakeWorldText(_hud, "Label", new Vector3(0f, LabelY, 0f),
@@ -137,7 +138,8 @@ namespace CQ.Runtime
             var col = gameObject.AddComponent<BoxCollider2D>();
             col.size = new Vector2(ColliderW, ColliderH);
 
-            Refresh(unit, "");
+            Refresh(unit);
+            HideHealth();
             _formationHudRenderers = _hud.GetComponentsInChildren<Renderer>(true);
         }
 
@@ -154,7 +156,7 @@ namespace CQ.Runtime
             }
         }
 
-        public void Refresh(Unit unit, string actionText, IReadOnlyList<StatusEffect> statuses = null)
+        public void Refresh(Unit unit, IReadOnlyList<StatusEffect> statuses = null)
         {
             float hpRatio = unit.MaxHp > 0 ? (float)unit.Hp / unit.MaxHp : 0f;
             if (_hpFill != null)
@@ -172,9 +174,11 @@ namespace CQ.Runtime
             if (_hpText != null)
             {
                 _hpText.text = unit.Hp + "/" + unit.MaxHp;
-                TmpKit.FitWorldHeight(_hpText, HpTextH);   // 位数变化后重新定标
+                if (HealthVisible) FitHealthText();
             }
 
+            _elementIcon.transform.parent.gameObject.SetActive(CharacterElements.IsValid(unit.Element));
+            _elementIcon.color = ElementPresentation.ColorOf(unit.Element);
             if (_label != null)
                 _label.text = unit.Name;
 
@@ -195,24 +199,39 @@ namespace CQ.Runtime
                 if (status != null)
                     icon.SetSlot(visible++);
             }
-
-            SetActionText(actionText);
         }
 
-        public void SetActionText(string actionText)
+        public void ShowHealth()
         {
-            if (_action == null) return;
-            _action.text = actionText;
-            _action.gameObject.SetActive(!string.IsNullOrEmpty(actionText));
-            FitReadableText(_action, ActionTextH, 2.7f);
+            _healthRemaining = SkillDetailsView.DisplayDuration;
+            _hpText.gameObject.SetActive(true);
+            _hpText.alpha = 0f;
+            FitHealthText();
         }
 
-        private static void FitReadableText(TextMeshPro text, float height, float maxWidth)
+        public void HideHealth()
         {
-            if (text == null || !text.gameObject.activeInHierarchy || string.IsNullOrEmpty(text.text)) return;
-            TmpKit.FitWorldHeight(text, height);
-            float width = text.textBounds.size.x * text.transform.localScale.x;
-            if (width > maxWidth) text.transform.localScale *= maxWidth / width;
+            _healthRemaining = 0f;
+            if (_hpText == null) return;
+            _hpText.alpha = 0f;
+            _hpText.gameObject.SetActive(false);
+        }
+
+        public void AdvanceHealthLifetime(float unscaledDeltaTime)
+        {
+            if (!HealthVisible) return;
+            _healthRemaining -= Mathf.Max(0f, unscaledDeltaTime);
+            if (_healthRemaining <= 0f) { HideHealth(); return; }
+            float fadeIn = Mathf.Clamp01((SkillDetailsView.DisplayDuration - _healthRemaining) / SkillDetailsView.FadeInDuration);
+            float fadeOut = Mathf.Clamp01(_healthRemaining / SkillDetailsView.FadeOutDuration);
+            _hpText.alpha = Mathf.SmoothStep(0f, 1f, Mathf.Min(fadeIn, fadeOut));
+        }
+
+        private void FitHealthText()
+        {
+            TmpKit.FitWorldHeight(_hpText, HpTextH);
+            float width = _hpText.textBounds.size.x * _hpText.transform.localScale.x;
+            if (width > BarW - BarInset) _hpText.transform.localScale *= (BarW - BarInset) / width;
         }
 
         /// <summary>飘字（伤害/治疗数值），到时自动销毁。magnitude 越大字越大。</summary>
@@ -222,8 +241,10 @@ namespace CQ.Runtime
         }
 
         /// <summary>只播放结算记录的实际扣血；同目标逐段出字，不再次扣血或按总量补段。</summary>
-        public void PlayDamageHits(IEnumerable<int> amounts, bool ultimate)
+        public void PlayDamageHits(IEnumerable<int> amounts, bool ultimate, string sourceElement = null, int elementMultiplierPercent = 100)
         {
+            _damageColor = ElementPresentation.DamageColor(sourceElement, elementMultiplierPercent);
+            _damageLabel = ElementPresentation.RelationLabel(elementMultiplierPercent);
             _pendingDamage.Clear();
             foreach (int amount in amounts)
                 if (amount > 0) _pendingDamage.Enqueue(amount);
@@ -242,7 +263,7 @@ namespace CQ.Runtime
             {
                 int amount = _pendingDamage.Dequeue();
                 float x = _multiHit ? (_hitIndex % 2 == 0 ? -0.55f : 0.55f) : 0f;
-                FloatingText.Spawn(transform, "-" + amount, Color.red, FloatY, amount, x);
+                FloatingText.Spawn(transform, "-" + amount, _damageColor, FloatY, amount, x, _damageLabel);
                 Flash(-amount);
                 BattleEffect.Spawn(this, "slash", _ultimateHit ? new Color(1f, 0.8f, 0.25f) : Color.white,
                     _ultimateHit ? 1.25f : 1f);
@@ -251,7 +272,11 @@ namespace CQ.Runtime
             }
         }
 
-        private void OnDisable() => _pendingDamage.Clear();
+        private void OnDisable()
+        {
+            _pendingDamage.Clear();
+            HideHealth();
+        }
 
         /// <summary>受击/受治疗反馈：闪白（伤害用白、治疗用绿）+ 伤害附带横向抖动。</summary>
         public void Flash(int hpDelta)
@@ -316,12 +341,12 @@ namespace CQ.Runtime
 
         public void SetFormationInteraction(bool dragging)
         {
-            if (dragging) SetActionText("");
             foreach (var icon in _statusIcons) icon.SetInteractionSuppressed(dragging);
         }
 
         private void Update()
         {
+            AdvanceHealthLifetime(Time.unscaledDeltaTime);
             float dt = Time.deltaTime * PlaybackSpeed;
 
             if (_flashT > 0f && _sr != null)
@@ -390,6 +415,21 @@ namespace CQ.Runtime
             _hpText = TmpKit.MakeWorldText(_hud, "HpText", new Vector3(0f, HpY, 0f),
                 UiKit.FontBold, HpTextH, Color.white, 56, FontStyles.Normal, "0/0");
             TmpKit.SetOutline(_hpText, new Color(0f, 0f, 0f, 1f), 0.28f);
+
+            var badge = new GameObject("ElementBadge").transform;
+            badge.SetParent(_hud, false);
+            badge.localPosition = new Vector3(-1.22f, HpY, 0f);
+            var border = badge.gameObject.AddComponent<SpriteRenderer>();
+            border.sprite = UiKit.CircleSprite();
+            border.color = new Color(0.025f, 0.04f, 0.06f, 0.95f);
+            border.sortingOrder = 38;
+            badge.localScale = Vector3.one * 0.34f;
+            var icon = new GameObject("ElementIcon");
+            icon.transform.SetParent(badge, false);
+            icon.transform.localScale = Vector3.one * 0.78f;
+            _elementIcon = icon.AddComponent<SpriteRenderer>();
+            _elementIcon.sprite = UiKit.CircleSprite();
+            _elementIcon.sortingOrder = 39;
 
             MakeBar("UltBg", UltY, SubBgH, BarW, new Color(0.05f, 0.06f, 0.09f, 0.98f), 35);
             _ultFill = MakeBar("UltFill", UltY, SubFillH, BarW - BarInset, new Color(1f, 0.85f, 0.25f), 36);

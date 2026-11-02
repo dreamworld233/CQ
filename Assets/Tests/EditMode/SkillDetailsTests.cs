@@ -249,7 +249,7 @@ public class SkillDetailsTests
     }
 
     [Test]
-    public void ControllerRejectsBattleInspectionAndClearsStaleBubble()
+    public void ControllerKeepsSkillInspectionSetupOnly_AndClearsStaleBubble()
     {
         var controller = _owner.AddComponent<BattleController>();
         var engine = AutoBattleTestData.Engine();

@@ -15,6 +15,7 @@ namespace CQ.Runtime
         public RectTransform CanvasRect { get; private set; }
         public RosterView Roster { get; private set; }
         public SkillDetailsView Skills { get; private set; }
+        public ElementGuideView Elements { get; private set; }
         public TextMeshProUGUI WinnerText;
         public TextMeshProUGUI SummaryText;
         public Button SpeedButton;
@@ -34,6 +35,7 @@ namespace CQ.Runtime
         public bool Muted { get; private set; }
         private TextMeshProUGUI _muteLabel;
         private TextMeshProUGUI _feedback;
+        private TextMeshProUGUI _roundLabel;
         private float _feedbackTime;
         private GameObject _resultPanel;
         private TextMeshProUGUI _speedLabel;
@@ -55,8 +57,14 @@ namespace CQ.Runtime
             BuildCanvas();
             BuildEventSystem();
             BuildBottomControls();
+            _roundLabel = UiKit.MakeText(CanvasRect, "1/" + TurnManager.RoundLimit, 38, Color.white, TextAnchor.MiddleCenter, true);
+            _roundLabel.name = "RoundCounter";
+            Rect((RectTransform)_roundLabel.transform, 0.5f, 1f, new Vector2(0f, -16f), new Vector2(520f, 72f));
+            _roundLabel.outlineColor = new Color(0.02f, 0.03f, 0.05f, 1f);
+            _roundLabel.outlineWidth = 0.2f;
             Roster = RosterView.Build(CanvasRect);
             Skills = SkillDetailsView.Build(CanvasRect);
+            Elements = ElementGuideView.Build(CanvasRect);
             BuildResultPanel();
             BuildErrorPanel();
         }
@@ -207,9 +215,15 @@ namespace CQ.Runtime
             rect.sizeDelta = size;
         }
 
+        public void RefreshRound(BattleEngine engine)
+        {
+            _roundLabel.text = (engine == null ? 1 : engine.CurrentRound) + "/" + TurnManager.RoundLimit;
+        }
+
         public void ResetBattleFeedback()
         {
             Skills.Hide();
+            RefreshRound(null);
             _feedback.text = "";
             _feedbackTime = 0f;
             WinnerText.text = "";

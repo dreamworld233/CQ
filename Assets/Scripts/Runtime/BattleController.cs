@@ -54,7 +54,7 @@ namespace CQ.Runtime
             _ui.OnSpeedChanged = ApplyPlaybackSpeed;
             _ui.Roster.OnToggle = ToggleRoster;
             _formationDrag.OnInspect = InspectUnit;
-            _formationDrag.OnDragStarted = () => _ui.Skills.Hide();
+            _formationDrag.OnDragStarted = () => { _ui.Skills.Hide(); HideHealth(); };
             NewBattle();
         }
 
@@ -63,7 +63,11 @@ namespace CQ.Runtime
             UpdateCameraViewport();
             if (Input.GetKeyDown(KeyCode.Escape))
             {
-                if (_ui != null && _ui.Skills.Visible) _ui.Skills.Hide();
+                if (_ui != null && (_ui.Skills.Visible || _views.Values.Any(view => view != null && view.HealthVisible)))
+                {
+                    _ui.Skills.Hide();
+                    HideHealth();
+                }
                 else if (_formationDrag != null && (_formationDrag.IsDragging || _formationDrag.IsSettling))
                     _formationDrag.CancelAndSnap();
                 else Application.Quit();
@@ -112,12 +116,29 @@ namespace CQ.Runtime
 
         private void InspectUnit(string id)
         {
-            if (_engine == null || _engine.Flow != BattleFlow.Setup) { _ui.Skills.Hide(); return; }
+            if (_ui == null) return;
+            if (_engine == null || _engine.Flow == BattleFlow.Finished || _ui.ResultVisible || _ui.ErrorPanel.activeSelf)
+            {
+                _ui.Skills.Hide();
+                HideHealth();
+                return;
+            }
             var unit = _engine.Ctx.GetUnit(id);
-            if (unit == null) { _ui.Skills.Hide(); return; }
-            if (_ui.ResultVisible || _ui.ErrorPanel.activeSelf) return;
-            _ui.Skills.Show(unit.Id, unit.Name, unit.Team == Team.Enemy, _engine.SkillsOf(id));
-            UpdateSkillBubble();
+            HideHealth();
+            if (unit == null || !_views.TryGetValue(unit.Id, out var view)) { _ui.Skills.Hide(); return; }
+            view.ShowHealth();
+            if (_engine.Flow == BattleFlow.Setup && !unit.IsDead)
+            {
+                _ui.Skills.Show(unit.Id, unit.Name, unit.Team == Team.Enemy, _engine.SkillsOf(id));
+                UpdateSkillBubble();
+            }
+            else _ui.Skills.Hide();
+        }
+
+        private void HideHealth()
+        {
+            foreach (var view in _views.Values)
+                if (view != null) view.HideHealth();
         }
 
         private void SaveFormation()
@@ -152,10 +173,13 @@ namespace CQ.Runtime
                 left = Mathf.Clamp(right / Mathf.Max(1, Screen.width), 0f, 0.4f);
             }
             _cam.rect = new Rect(left, 0f, 1f - left, 1f);
+            // 布阵右上角给克制图留白；仅平移镜头，不缩小立绘或改变真实站位。
+            _cam.transform.position = new Vector3(left > 0f ? 0.95f : 0f, 0f, -10f);
         }
 
         private void StopDriver()
         {
+            HideHealth();
             _generation++;
             if (_driver != null) StopCoroutine(_driver);
             _driver = null;
@@ -270,13 +294,10 @@ namespace CQ.Runtime
         private void RefreshWorld()
         {
             if (_engine == null) return;
-            var action = _engine.CurrentAction;
             foreach (var unit in _engine.Ctx.Units)
             {
                 if (!_views.TryGetValue(unit.Id, out var view)) continue;
-                string current = action != null && action.ActorId == unit.Id
-                    ? ActionTypeLabel(action.ActionType) + " · " + action.ActionName : "";
-                view.Refresh(unit, current, _engine.Ctx.GetStatuses(unit.Id));
+                view.Refresh(unit, _engine.Ctx.GetStatuses(unit.Id));
                 view.SetAppearance(UnitColor(unit), unit.IsDead);
             }
         }
@@ -296,12 +317,14 @@ namespace CQ.Runtime
             bool setup = _engine != null && _engine.Flow == BattleFlow.Setup;
             _ui.StartBattleButton.gameObject.SetActive(setup);
             _ui.StartBattleButton.interactable = setup && _party != null && _party.CanStart;
+            _ui.RefreshRound(_engine);
         }
 
         private void StartBattleAction()
         {
             if (_engine == null || _engine.Flow != BattleFlow.Setup) return;
             _ui.Skills.Hide();
+            HideHealth();
             _formationDrag?.CancelAndSnap();
             SaveFormation();
             if (!_engine.StartBattle()) return;
@@ -384,6 +407,7 @@ namespace CQ.Runtime
 
         private void ShowBattleResult()
         {
+            HideHealth();
             if (_announcedWinner) return;
             _announcedWinner = true;
             bool won = _engine.Winner == Team.Player;
@@ -393,6 +417,7 @@ namespace CQ.Runtime
                 "队伍输出 " + BattleReportView.FormatValue(allies.Sum(row => row.DamageDealt)) +
                 "    有效治疗 " + BattleReportView.FormatValue(allies.Sum(row => row.HealingDone)) +
                 "\n" + (won ? (HasNextLevel() ? "整装待发，准备迎接下一场战斗。" : "三关完成，感谢你的指挥！") :
+                _engine.RoundLimitReached ? "达到 " + TurnManager.RoundLimit + " 回合上限，未击败敌方。调整阵容或站位，再试一次。" :
                 "调整站位，再试一次。每次尝试都能了解伙伴的表现。");
             _ui.ShowResult(won ? "我方胜利" : "我方失败", summary, rows,
                 HasNextLevel() ? "下一关 → " + _levels[_levelIndex + 1].name : "", HasNextLevel());
@@ -400,9 +425,6 @@ namespace CQ.Runtime
 
         private float BeginActionPresentation(ActionResult result)
         {
-            foreach (var pair in _views)
-                pair.Value.SetActionText(pair.Key == result.ActorId
-                    ? ActionTypeLabel(result.ActionType) + " · " + result.ActionName : "");
             if (!_views.TryGetValue(result.ActorId, out var actor)) return 0f;
             string targetId = result.HitTargetIds.FirstOrDefault(id => _views.ContainsKey(id));
             Vector3? target = targetId != null ? _views[targetId].transform.position : (Vector3?)null;
@@ -414,11 +436,10 @@ namespace CQ.Runtime
             if (result.Sequence <= _presentedSequence) return;
             var sound = BattleAudio.SoundFor(result);
             if (sound.HasValue) _audio.Play(sound.Value);
-            string action = UnitName(result.ActorId) + "〔" + ActionTypeLabel(result.ActionType) + " · " + result.ActionName + "〕";
-            if (result.ActionType == "ult") _ui.ShowFeedback(action, new Color(1f, 0.85f, 0.3f));
             foreach (var hits in result.Hits.Where(hit => hit.HpDamage > 0).GroupBy(hit => hit.TargetUnitId))
                 if (_views.TryGetValue(hits.Key, out var hitView))
-                    hitView.PlayDamageHits(hits.Select(hit => hit.HpDamage), result.ActionType == "ult");
+                    hitView.PlayDamageHits(hits.Select(hit => hit.HpDamage), result.ActionType == "ult",
+                        hits.First().SourceElement, hits.First().ElementMultiplierPercent);
             foreach (var heals in result.Heals.Where(heal => heal.HpRestored > 0).GroupBy(heal => heal.TargetUnitId))
                 if (_views.TryGetValue(heals.Key, out var healedView))
                 {
@@ -440,19 +461,6 @@ namespace CQ.Runtime
             _presentedSequence = result.Sequence;
         }
 
-        private static string ActionTypeLabel(string type)
-        {
-            switch (type)
-            {
-                case "basic": return "普攻";
-                case "special": return "特殊";
-                case "ult": return "终结技";
-                case "passive": return "被动";
-                case "skipped": return "跳过";
-                default: return type;
-            }
-        }
-
         private void NextLevelAction()
         {
             if (!HasNextLevel() || !_ui.ResultVisible) return;
@@ -468,6 +476,5 @@ namespace CQ.Runtime
             foreach (var error in errors) Debug.LogError("[" + label + "] " + error);
         }
 
-        private string UnitName(string id) => _engine?.Ctx.GetUnit(id)?.Name ?? id ?? "无";
     }
 }

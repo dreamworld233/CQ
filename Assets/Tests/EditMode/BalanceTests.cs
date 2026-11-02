@@ -48,12 +48,12 @@ public class BalanceTests
 
     [TestCase(false)]
     [TestCase(true)]
-    public void ThirdEncounter_AcrossSeedsAndFrontlineChoices_AvoidsHealingStalemates(bool guardOnlyFront)
+    public void ThirdEncounter_AcrossSeedsAndFrontlineChoices_TerminatesWithinRoundLimit(bool guardOnlyFront)
     {
         var chars = ConfigLoader.LoadCharacters().items;
         var enemies = ConfigLoader.LoadEnemies().items.ToDictionary(e => e.id);
         var level = ConfigLoader.LoadLevels().items.Single(l => l.id == 3);
-        int wins = 0, longest = 0;
+        int wins = 0, timeouts = 0, longest = 0;
         for (long seed = 1; seed <= 100; seed++)
         {
             var engine = BattleEngine.Create(seed, chars, level, enemies);
@@ -63,10 +63,22 @@ public class BalanceTests
             BattleTestDriver.Drain(engine);
             longest = System.Math.Max(longest, engine.Round);
             if (engine.Winner == Team.Player) wins++;
-            Assert.LessOrEqual(engine.Round, 20, $"seed={seed}, guardOnlyFront={guardOnlyFront}");
+            Assert.IsTrue(engine.IsFinished);
+            Assert.IsFalse(engine.IsActionOccupied);
+            Assert.LessOrEqual(engine.Round, TurnManager.RoundLimit, $"seed={seed}, guardOnlyFront={guardOnlyFront}");
+            if (engine.RoundLimitReached)
+            {
+                timeouts++;
+                Assert.AreEqual(TurnManager.RoundLimit, engine.Round);
+                Assert.AreEqual(Team.Enemy, engine.Winner);
+                Assert.IsTrue(engine.Players.Any(unit => !unit.IsDead));
+                Assert.IsTrue(engine.Enemies.Any(unit => !unit.IsDead));
+            }
+            else Assert.AreEqual(Team.Player, engine.Winner, $"非超时失败 seed={seed}");
         }
-        Assert.AreEqual(100, wins, $"guardOnlyFront={guardOnlyFront}");
-        TestContext.WriteLine($"guardOnlyFront={guardOnlyFront}: wins={wins}/100, longest={longest}");
+        Assert.AreEqual(100, wins + timeouts, "原样本胜局允许因新上限转为超时，不应出现未解释的全灭");
+        if (guardOnlyFront) Assert.AreEqual(100, wins, "保留原本无长局阵型的胜率基线");
+        TestContext.WriteLine($"guardOnlyFront={guardOnlyFront}: wins={wins}/100, timeouts={timeouts}/100, longest={longest}");
     }
 
     [Test]

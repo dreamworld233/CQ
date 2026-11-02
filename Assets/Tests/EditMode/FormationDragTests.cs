@@ -275,7 +275,7 @@ public class FormationDragTests
         _drag.RefreshAvailability();
         AssertPosition("sword", "front1");
         Assert.IsFalse(_slots.gameObject.activeSelf);
-        Assert.IsFalse(_drag.BeginPointer(-1, ScreenSlot("front1"), false));
+        Assert.IsTrue(_drag.BeginPointer(-1, ScreenSlot("front1"), false));
         _drag.MovePointer(-1, ScreenSlot("back1"));
         Assert.IsFalse(_drag.IsDragging);
         AssertPosition("sword", "front1");
@@ -287,7 +287,7 @@ public class FormationDragTests
     public void DragClosesPinnedStatusDetailsAndSuppressesHoverUntilSettlementFinishes()
     {
         var view = _views["sword"];
-        view.Refresh(_engine.Players[0], "", new[] { new StatusEffect { Type = StatusType.AttackUp, Duration = 2, Turn = "action", Percent = 20 } });
+        view.Refresh(_engine.Players[0], new[] { new StatusEffect { Type = StatusType.AttackUp, Duration = 2, Turn = "action", Percent = 20 } });
         var icon = view.GetComponentsInChildren<StatusIconView>().Single();
         var down = typeof(StatusIconView).GetMethod("OnMouseDown", BindingFlags.Instance | BindingFlags.NonPublic);
         var enter = typeof(StatusIconView).GetMethod("OnMouseEnter", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -393,7 +393,7 @@ public class FormationDragTests
     }
 
     [Test]
-    public void EnemySetupTapInspects_ButNeitherTeamCanInspectDuringBattle()
+    public void EnemySetupAndBothTeamsBattleTapsInspect_WithoutMovingFormation()
     {
         string inspected = null;
         _drag.OnInspect = id => inspected = id;
@@ -404,11 +404,13 @@ public class FormationDragTests
         Assert.AreEqual(enemy.Id, inspected);
         _engine.StartBattle();
         inspected = "unchanged";
-        Assert.IsFalse(_drag.BeginPointer(-1, ScreenSlot("front1"), false));
-        Assert.IsFalse(_drag.BeginPointer(7, enemyPoint, true));
+        Assert.IsTrue(_drag.BeginPointer(-1, ScreenSlot("front1"), false));
         _drag.RefreshAvailability();
         _drag.EndPointer(-1, ScreenSlot("front1"));
-        Assert.AreEqual("unchanged", inspected);
+        Assert.AreEqual("sword", inspected);
+        Assert.IsTrue(_drag.BeginPointer(7, enemyPoint, true));
+        _drag.EndPointer(7, enemyPoint);
+        Assert.AreEqual(enemy.Id, inspected);
         Assert.AreEqual(BattleFlow.Resolving, _engine.Flow);
         Assert.IsFalse(_drag.IsDragging);
         Assert.AreEqual(0, _changes);
@@ -431,7 +433,7 @@ public class FormationDragTests
     }
 
     [Test]
-    public void MovingBattleArtCannotOpenInspectionOrInterruptAnimation()
+    public void MovingBattleArtCanBeInspected_WithoutInterruptingAnimation()
     {
         _engine.StartBattle();
         var art = _views["sword"].transform.Find("Art").GetComponent<SpriteRenderer>();
@@ -440,11 +442,49 @@ public class FormationDragTests
         string inspected = null;
         _drag.OnInspect = id => inspected = id;
         var point = ScreenWorld(art.bounds.center);
-        Assert.IsFalse(_drag.BeginPointer(-1, point, false));
+        Assert.IsTrue(_drag.BeginPointer(-1, point, false));
         _drag.EndPointer(-1, point);
-        Assert.IsNull(inspected);
+        Assert.AreEqual("sword", inspected);
         Assert.AreEqual(position, art.transform.localPosition, "战中点击不能打断近战位移动画");
         Assert.AreEqual(0, _changes);
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void BattleGesturesRespectOwnershipAndMovementThreshold_AndNeverDrag(bool touch)
+    {
+        _engine.StartBattle();
+        int inspections = 0;
+        _drag.OnInspect = id => { if (id != null) inspections++; };
+        var point = ScreenSlot("front1");
+        Assert.IsTrue(_drag.BeginPointer(7, point, touch));
+        _drag.EndPointer(8, point);
+        Assert.AreEqual(0, inspections);
+        _drag.MovePointer(7, point + Vector2.right * (_drag.DragThreshold + 1f));
+        _drag.EndPointer(7, point);
+        Assert.AreEqual(0, inspections);
+        Assert.IsFalse(_drag.IsDragging);
+        AssertPosition("sword", "front1");
+        Assert.AreEqual(0, _changes);
+        Assert.IsTrue(_drag.BeginPointer(7, point, touch));
+        _drag.EndPointer(7, point, true);
+        Assert.AreEqual(0, inspections);
+    }
+
+    [Test]
+    public void FinishingBattleCancelsPressedHealthInspection()
+    {
+        _engine.StartBattle();
+        int inspections = 0;
+        _drag.OnInspect = id => inspections++;
+        var point = ScreenSlot("front1");
+        Assert.IsTrue(_drag.BeginPointer(-1, point, false));
+        foreach (var enemy in _engine.Enemies) enemy.Hp = 0;
+        _engine.Advance();
+        Assert.IsTrue(_engine.IsFinished);
+        _drag.RefreshAvailability();
+        _drag.EndPointer(-1, point);
+        Assert.AreEqual(0, inspections);
     }
 
     private void BeginSword() => Assert.IsTrue(_drag.BeginPointer(-1, ScreenSlot("front1"), false));

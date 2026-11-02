@@ -28,6 +28,7 @@ namespace CQ.Runtime
         private bool _touch;
         private bool _canDrag;
         private bool _tapMoved;
+        private BattleFlow _pressFlow;
         public Action<string> OnInspect;
         public Action OnDragStarted;
         private Vector2 _pressPosition;
@@ -65,14 +66,14 @@ namespace CQ.Runtime
         public void RefreshAvailability()
         {
             bool setup = _engine != null && _engine.Flow == BattleFlow.Setup;
-            if (!setup && (_actorId != null || IsSettling)) CancelAndSnap();
+            if ((_actorId != null && (_engine == null || _engine.Flow != _pressFlow)) || (!setup && IsSettling)) CancelAndSnap();
             if (_slots != null) _slots.gameObject.SetActive(setup);
             RefreshPreview();
         }
 
         private void Update()
         {
-            if (_engine == null || _engine.Flow != BattleFlow.Setup)
+            if (_engine == null || _engine.Flow == BattleFlow.Finished)
             {
                 if (_actorId != null || IsSettling) CancelAndSnap();
                 return;
@@ -112,14 +113,16 @@ namespace CQ.Runtime
 
         public bool BeginPointer(int pointerId, Vector2 screenPosition, bool touch)
         {
-            if (_actorId != null || IsSettling || _camera == null || _engine == null || _engine.Flow != BattleFlow.Setup ||
+            if (_actorId != null || IsSettling || _camera == null || _engine == null || _engine.Flow == BattleFlow.Finished ||
                 OverUi(screenPosition, pointerId)) return false;
             Vector2 point = WorldPoint(screenPosition);
             var hits = Physics2D.OverlapPointAll(point);
             if (hits.Any(hit => hit.GetComponent<StatusIconView>() != null)) return false;
-            var hitView = PickView(hits, point) ?? PickView(Physics2D.OverlapCircleAll(point, 0.35f), point);
+            var hitView = (_engine.Flow == BattleFlow.Resolving ? PickBattleView(point) : null) ??
+                PickView(hits, point) ?? PickView(Physics2D.OverlapCircleAll(point, 0.35f), point);
             var unit = hitView != null ? _engine.Ctx.GetUnit(hitView.UnitId) : null;
             if (unit == null) { OnInspect?.Invoke(null); return false; }
+            _pressFlow = _engine.Flow;
             _canDrag = _engine.Flow == BattleFlow.Setup && !unit.IsDead && unit.Team == Team.Player;
             _tapMoved = false;
             _actorId = unit.Id;
@@ -135,7 +138,7 @@ namespace CQ.Runtime
         public void MovePointer(int pointerId, Vector2 screenPosition)
         {
             if (_actorId == null || pointerId != _pointerId) return;
-            if (_engine.Flow != BattleFlow.Setup) { CancelAndSnap(); return; }
+            if (_engine.Flow != _pressFlow) { CancelAndSnap(); return; }
             if (!_canDrag)
             {
                 if ((screenPosition - _pressPosition).sqrMagnitude >= DragThreshold * DragThreshold) _tapMoved = true;
@@ -303,6 +306,27 @@ namespace CQ.Runtime
             _uiHits.Clear();
             system.RaycastAll(data, _uiHits);
             return _uiHits.Count > 0;
+        }
+
+        private UnitView PickBattleView(Vector2 point)
+        {
+            UnitView picked = null;
+            int bestOrder = int.MinValue;
+            float bestDistance = float.MaxValue;
+            foreach (var view in _views.Values)
+            {
+                if (view == null || !view.gameObject.activeInHierarchy) continue;
+                var bounds = view.InspectionBounds;
+                var closest = bounds.ClosestPoint(new Vector3(point.x, point.y, bounds.center.z));
+                float distance = ((Vector2)closest - point).sqrMagnitude;
+                if (distance > 0.35f * 0.35f) continue;
+                int order = view.transform.Find("Art").GetComponent<SpriteRenderer>().sortingOrder;
+                if (order < bestOrder || (order == bestOrder && distance >= bestDistance)) continue;
+                picked = view;
+                bestOrder = order;
+                bestDistance = distance;
+            }
+            return picked;
         }
 
         private UnitView PickView(Collider2D[] hits, Vector2 point)

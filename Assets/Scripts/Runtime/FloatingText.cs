@@ -22,8 +22,10 @@ namespace CQ.Runtime
         private Vector3 _baseScale = Vector3.one;
         private float _age;
         private UnitView _view;
+        private TextMeshPro _relation;
 
-        public static void Spawn(Transform parent, string text, Color color, float localY, float magnitude = 0f, float localX = 0f)
+        public static void Spawn(Transform parent, string text, Color color, float localY, float magnitude = 0f, float localX = 0f,
+            string relationLabel = "")
         {
             if (parent == null || string.IsNullOrEmpty(text)) return;
 
@@ -36,6 +38,13 @@ namespace CQ.Runtime
             ft._tmp = tmp;
             ft._view = parent.GetComponent<UnitView>();
             ft._baseScale = tmp.transform.localScale;
+            if (!string.IsNullOrEmpty(relationLabel))
+            {
+                float scale = ft._baseScale.y;
+                ft._relation = TmpKit.MakeWorldText(tmp.transform, "Relation", new Vector3(0f, h * 0.7f / scale, 0f),
+                    UiKit.FontBold, h * 0.30f / scale, Color.white, 61, FontStyles.Bold, relationLabel);
+                TmpKit.SetOutline(ft._relation, new Color(0f, 0f, 0f, 0.95f), 0.3f);
+            }
             tmp.transform.localScale = ft._baseScale * PopFrom;
         }
 
@@ -56,6 +65,7 @@ namespace CQ.Runtime
                 var c = _tmp.color;
                 c.a = Mathf.Clamp01(1f - Mathf.Clamp01((_age / Life - FadeStart) / (1f - FadeStart)));
                 _tmp.color = c;
+                if (_relation != null) _relation.alpha = c.a;
             }
 
             if (_age >= Life) Destroy(gameObject);

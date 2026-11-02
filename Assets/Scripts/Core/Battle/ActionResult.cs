@@ -56,9 +56,13 @@ namespace CQ.Core.Battle
         public string TargetUnitId { get; }
         public int HpDamage { get; }
         public bool TargetDead { get; }
-        internal AttackHit(string source, string target, int hpDamage, bool dead)
+        public string SourceElement { get; }
+        public int ElementMultiplierPercent { get; }
+        internal AttackHit(Unit source, Unit target, int hpDamage)
         {
-            SourceUnitId = source; TargetUnitId = target; HpDamage = hpDamage; TargetDead = dead;
+            SourceUnitId = source.Id; TargetUnitId = target.Id; HpDamage = hpDamage; TargetDead = target.IsDead;
+            SourceElement = source.Element;
+            ElementMultiplierPercent = Config.CharacterElements.DamageMultiplierPercent(source.Element, target.Element);
         }
     }
 

@@ -7,6 +7,7 @@ namespace CQ.Core.Config
     public static class CharacterElements
     {
         public static readonly IReadOnlyList<string> All = Array.AsReadOnly(new[] { "metal", "wood", "water", "fire", "earth" });
+        public static readonly IReadOnlyList<string> CounterCycle = Array.AsReadOnly(new[] { "metal", "wood", "earth", "water", "fire" });
         public static bool IsValid(string value) => value == "metal" || value == "wood" || value == "water" || value == "fire" || value == "earth";
         public static int DamageMultiplierPercent(string source, string target)
         {
