@@ -23,12 +23,12 @@ namespace CQ.Runtime
         private float _age;
         private UnitView _view;
 
-        public static void Spawn(Transform parent, string text, Color color, float localY, float magnitude = 0f)
+        public static void Spawn(Transform parent, string text, Color color, float localY, float magnitude = 0f, float localX = 0f)
         {
             if (parent == null || string.IsNullOrEmpty(text)) return;
 
             float h = Mathf.Clamp(MinH + Mathf.Abs(magnitude) / 60f, MinH, MaxH);
-            var tmp = TmpKit.MakeWorldText(parent, "Float", new Vector3(0f, localY, 0f),
+            var tmp = TmpKit.MakeWorldText(parent, "Float", new Vector3(localX, localY, 0f),
                 UiKit.FontBold, h, color, 60, FontStyles.Bold, text);
             TmpKit.SetOutline(tmp, new Color(0f, 0f, 0f, 0.95f), 0.3f);
 

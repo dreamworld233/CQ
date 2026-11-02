@@ -13,6 +13,8 @@ namespace CQ.Runtime
         private static readonly Color PanelBg = new Color(0.07f, 0.10f, 0.14f, 0.98f);
         private static readonly Color ButtonBg = new Color(0.16f, 0.22f, 0.30f, 0.98f);
         public RectTransform CanvasRect { get; private set; }
+        public RosterView Roster { get; private set; }
+        public SkillDetailsView Skills { get; private set; }
         public TextMeshProUGUI WinnerText;
         public TextMeshProUGUI SummaryText;
         public Button SpeedButton;
@@ -53,6 +55,8 @@ namespace CQ.Runtime
             BuildCanvas();
             BuildEventSystem();
             BuildBottomControls();
+            Roster = RosterView.Build(CanvasRect);
+            Skills = SkillDetailsView.Build(CanvasRect);
             BuildResultPanel();
             BuildErrorPanel();
         }
@@ -86,19 +90,19 @@ namespace CQ.Runtime
             StartBattleButton.onClick.AddListener(() => OnStartBattle?.Invoke());
             var mute = UiKit.MakeButton(CanvasRect, "音效：开", 22, ButtonBg);
             mute.name = "MuteButton";
-            Rect((RectTransform)mute.transform, 1f, 0f, new Vector2(-36f, 180f), new Vector2(180f, 44f));
+            Rect((RectTransform)mute.transform, 0.5f, 0f, new Vector2(100f, 36f), new Vector2(180f, 44f));
             _muteLabel = mute.GetComponentInChildren<TextMeshProUGUI>();
             mute.onClick.AddListener(() => SetMuted(!Muted));
-            _feedback = UiKit.MakeText(CanvasRect, "", 30, Color.white, TextAnchor.MiddleRight, true);
+            _feedback = UiKit.MakeText(CanvasRect, "", 30, Color.white, TextAnchor.MiddleCenter, true);
             _feedback.name = "FeedbackText";
-            Rect((RectTransform)_feedback.transform, 1f, 0f, new Vector2(-36f, 236f), new Vector2(740f, 54f));
+            Rect((RectTransform)_feedback.transform, 0.5f, 0f, new Vector2(0f, 90f), new Vector2(580f, 54f));
             _feedback.enableWordWrapping = true;
             _feedback.enableAutoSizing = true;
             _feedback.fontSizeMin = 20f;
             _feedback.fontSizeMax = 30f;
             SpeedButton = UiKit.MakeButton(CanvasRect, "速度：1×", 26, ButtonBg);
             SpeedButton.name = "SpeedButton";
-            Rect((RectTransform)SpeedButton.transform, 1f, 0f, new Vector2(-236f, 180f), new Vector2(180f, 44f));
+            Rect((RectTransform)SpeedButton.transform, 0.5f, 0f, new Vector2(-100f, 36f), new Vector2(180f, 44f));
             _speedLabel = SpeedButton.GetComponentInChildren<TextMeshProUGUI>();
             SpeedButton.onClick.AddListener(() =>
             {
@@ -116,7 +120,9 @@ namespace CQ.Runtime
             _resultPanel = overlay.gameObject;
             var panel = UiKit.AddRect(overlay, "ResultCard", new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
                 new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(1260f, 880f));
-            panel.gameObject.AddComponent<Image>().color = PanelBg;
+            var cardImage = panel.gameObject.AddComponent<Image>();
+            UiKit.UseRoundedBackground(cardImage);
+            cardImage.color = PanelBg;
             WinnerText = UiKit.MakeText(panel, "", 56, new Color(1f, 0.85f, 0.3f), TextAnchor.MiddleCenter, true);
             Rect((RectTransform)WinnerText.transform, 0.5f, 1f, new Vector2(0f, -16f), new Vector2(1140f, 90f));
             SummaryText = UiKit.MakeText(panel, "", 26, Color.white, TextAnchor.MiddleCenter);
@@ -152,6 +158,7 @@ namespace CQ.Runtime
 
         public void ShowResult(string title, string summary, IReadOnlyList<UnitBattleStatistics> rows, string nextLabel, bool hasNext)
         {
+            Skills.Hide();
             WinnerText.text = title;
             WinnerText.color = title == "我方失败" ? new Color(1f, 0.45f, 0.4f) : new Color(1f, 0.85f, 0.3f);
             WinnerText.gameObject.SetActive(true);
@@ -202,6 +209,7 @@ namespace CQ.Runtime
 
         public void ResetBattleFeedback()
         {
+            Skills.Hide();
             _feedback.text = "";
             _feedbackTime = 0f;
             WinnerText.text = "";
@@ -228,6 +236,7 @@ namespace CQ.Runtime
 
         public void ShowError(string message)
         {
+            Skills.Hide();
             ErrorPanel.SetActive(true);
             ErrorText.text = message;
         }

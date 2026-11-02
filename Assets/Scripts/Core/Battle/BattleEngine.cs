@@ -57,7 +57,8 @@ namespace CQ.Core.Battle
             }, enemyCatalog, formationConfig);
 
         public static BattleEngine Create(long seed, IEnumerable<CharacterConfig> characters, LevelConfig level,
-            IReadOnlyDictionary<string, EnemyConfig> enemyCatalog, FormationConfig formationConfig = null)
+            IReadOnlyDictionary<string, EnemyConfig> enemyCatalog, FormationConfig formationConfig = null,
+            IReadOnlyDictionary<string, string> deployment = null)
         {
             if (characters == null) throw new ArgumentNullException(nameof(characters));
             if (enemyCatalog == null) throw new ArgumentNullException(nameof(enemyCatalog));
@@ -67,18 +68,25 @@ namespace CQ.Core.Battle
                 string error = ConfigValidator.ValidateCharacter(config);
                 if (error != null) throw new ArgumentException(error, nameof(characters));
             }
-            string referenceError = ConfigValidator.ValidateLevelReferences(level, allCharacters, enemyCatalog);
+            string referenceError = ConfigValidator.ValidateLevelReferences(level, allCharacters, enemyCatalog, deployment != null);
             if (referenceError != null) throw new ArgumentException(referenceError, nameof(level));
             var roster = level.players == null ? allCharacters :
                 level.players.Select(id => allCharacters.First(c => c.id == id)).ToList();
-            if (roster.Count == 0 || roster.Count > Formation.Capacity)
+            if (deployment != null)
+            {
+                if (deployment.Count > Formation.Capacity || deployment.Keys.Any(id => !roster.Any(c => c.id == id)) ||
+                    deployment.Values.Any(slot => !Formation.IsValidSlot(slot)) || deployment.Values.Distinct().Count() != deployment.Count)
+                    throw new ArgumentException("部署角色不可用、数量超限或槽位非法/重复", nameof(deployment));
+                roster = roster.Where(character => deployment.ContainsKey(character.id)).ToList();
+            }
+            else if (roster.Count == 0 || roster.Count > Formation.Capacity)
                 throw new ArgumentException("我方数量须为1至5", nameof(characters));
             var players = new List<Unit>();
             var enemies = new List<Unit>();
             var configs = new Dictionary<string, CharacterConfig>();
             foreach (var config in roster)
             {
-                players.Add(BuildUnit(config, config.id, Team.Player, config.defaultSlot));
+                players.Add(BuildUnit(config, config.id, Team.Player, deployment == null ? config.defaultSlot : deployment[config.id]));
                 configs.Add(config.id, config);
             }
             var wave = level.waves[0];
@@ -99,7 +107,7 @@ namespace CQ.Core.Battle
 
         private static Unit BuildUnit(CharacterConfig config, string id, Team team, string slot) => new Unit(id, team)
         {
-            Name = config.name, Hp = config.maxHp, MaxHp = config.maxHp,
+            Name = config.name, Element = config.element, Hp = config.maxHp, MaxHp = config.maxHp,
             BaseAttack = config.baseAttack, BaseDefense = config.baseDefense,
             BaseSpeed = config.baseSpeed, SlotId = slot
         };
@@ -117,7 +125,7 @@ namespace CQ.Core.Battle
 
         public bool StartBattle()
         {
-            if (Flow != BattleFlow.Setup) return false;
+            if (Flow != BattleFlow.Setup || Players.Count == 0) return false;
             CheckWinner();
             if (IsFinished) return false;
             Flow = BattleFlow.Resolving;

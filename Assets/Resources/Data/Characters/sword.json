@@ -1,6 +1,7 @@
 {
   "id": "sword",
   "name": "剑士",
+  "element": "metal",
   "maxHp": 380,
   "baseAttack": 48,
   "baseDefense": 14,

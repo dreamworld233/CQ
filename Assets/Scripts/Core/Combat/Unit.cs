@@ -5,6 +5,7 @@ namespace CQ.Core.Combat
     {
         public string Id;
         public string Name;
+        public string Element;
         public Team Team;
 
         public int Hp;

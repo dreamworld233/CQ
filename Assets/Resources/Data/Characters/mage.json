@@ -1,6 +1,7 @@
 {
   "id": "mage",
   "name": "术士",
+  "element": "water",
   "maxHp": 320,
   "baseAttack": 42,
   "baseDefense": 10,

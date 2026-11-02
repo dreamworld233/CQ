@@ -20,7 +20,8 @@ namespace CQ.Runtime
         private int _levelIndex;
         private BattleEngine _engine;
         private readonly Dictionary<string, UnitView> _views = new Dictionary<string, UnitView>();
-        private readonly Dictionary<string, string> _savedSlots = new Dictionary<string, string>();
+        private PartyRoster _party;
+        private string _newCompanion;
         private FormationDrag _formationDrag;
         private long _presentedSequence;
         private Transform _worldRoot;
@@ -51,17 +52,42 @@ namespace CQ.Runtime
             _ui.OnRetry = NewBattle;
             _ui.OnNextLevel = NextLevelAction;
             _ui.OnSpeedChanged = ApplyPlaybackSpeed;
+            _ui.Roster.OnToggle = ToggleRoster;
+            _formationDrag.OnInspect = InspectUnit;
+            _formationDrag.OnDragStarted = () => _ui.Skills.Hide();
             NewBattle();
         }
 
         private void Update()
         {
+            UpdateCameraViewport();
             if (Input.GetKeyDown(KeyCode.Escape))
             {
-                if (_formationDrag != null && (_formationDrag.IsDragging || _formationDrag.IsSettling))
+                if (_ui != null && _ui.Skills.Visible) _ui.Skills.Hide();
+                else if (_formationDrag != null && (_formationDrag.IsDragging || _formationDrag.IsSettling))
                     _formationDrag.CancelAndSnap();
                 else Application.Quit();
             }
+        }
+
+        private void LateUpdate() => UpdateSkillBubble();
+
+        private void UpdateSkillBubble()
+        {
+            if (_ui == null || !_ui.Skills.Visible) return;
+            if (_engine == null || _engine.Flow != BattleFlow.Setup)
+            {
+                _ui.Skills.Hide();
+                return;
+            }
+            var unit = _engine.Ctx.GetUnit(_ui.Skills.UnitId);
+            if (unit == null || unit.IsDead || !_views.TryGetValue(unit.Id, out var view) || view == null)
+            {
+                _ui.Skills.Hide();
+                return;
+            }
+            _ui.Skills.Follow(_cam, view.InspectionBounds,
+                SkillDetailsView.PreferRight(unit.Team == Team.Enemy, unit.Row == "front"));
         }
 
         private Camera EnsureCamera()
@@ -84,17 +110,48 @@ namespace CQ.Runtime
         private Vector3 SlotTargetPosition(Team team, string slotId) =>
             PositioningView.Position(team, slotId, layout) + Vector3.down * (0.78f * 0.72f);
 
-        private void SaveFormation()
+        private void InspectUnit(string id)
         {
-            if (_engine == null) return;
-            foreach (var unit in _engine.Players) _savedSlots[unit.Id] = unit.SlotId;
+            if (_engine == null || _engine.Flow != BattleFlow.Setup) { _ui.Skills.Hide(); return; }
+            var unit = _engine.Ctx.GetUnit(id);
+            if (unit == null) { _ui.Skills.Hide(); return; }
+            if (_ui.ResultVisible || _ui.ErrorPanel.activeSelf) return;
+            _ui.Skills.Show(unit.Id, unit.Name, unit.Team == Team.Enemy, _engine.SkillsOf(id));
+            UpdateSkillBubble();
         }
 
-        private void RestoreFormation()
+        private void SaveFormation()
         {
-            foreach (var unit in _engine.Players)
-                if (_savedSlots.TryGetValue(unit.Id, out var slot)) _engine.TryMovePlayer(unit.Id, slot);
+            if (_engine != null && _party != null) _party.CapturePositions(_engine.Players);
+        }
+
+        private void ToggleRoster(string id)
+        {
+            if (_engine == null || _engine.Flow != BattleFlow.Setup || _party == null) return;
+            _formationDrag.CancelAndSnap();
             SaveFormation();
+            if (!_party.TryToggle(id, out var error))
+            {
+                _ui.ShowFeedback(error, new Color(1f, 0.78f, 0.42f));
+                return;
+            }
+            if (id == _newCompanion) _newCompanion = null;
+            NewBattle();
+            _audio.Play(BattleSound.Select);
+        }
+
+        private void UpdateCameraViewport()
+        {
+            if (_cam == null || _ui == null || _ui.Roster == null) return;
+            float left = 0f;
+            if (_ui.Roster.gameObject.activeInHierarchy)
+            {
+                var panel = _ui.Roster.PanelRect;
+                float right = RectTransformUtility.WorldToScreenPoint(null,
+                    panel.TransformPoint(new Vector3(panel.rect.xMax, 0f, 0f))).x;
+                left = Mathf.Clamp(right / Mathf.Max(1, Screen.width), 0f, 0.4f);
+            }
+            _cam.rect = new Rect(left, 0f, 1f - left, 1f);
         }
 
         private void StopDriver()
@@ -113,6 +170,7 @@ namespace CQ.Runtime
             _audio?.StopPlayback();
             SaveFormation();
             _engine = null;
+            _ui.Roster.gameObject.SetActive(false);
             _announcedWinner = false;
             _presentedSequence = 0;
             _ui.ResetBattleFeedback();
@@ -135,7 +193,7 @@ namespace CQ.Runtime
             _levelIndex = Mathf.Clamp(_levelIndex, 0, _levels.Count - 1);
             var level = _levels[_levelIndex];
             var catalog = enemies.items.ToDictionary(enemy => enemy.id);
-            string error = ConfigValidator.ValidateLevelReferences(level, chars.items, catalog);
+            string error = ConfigValidator.ValidateLevelReferences(level, chars.items, catalog, true);
             if (error != null)
             {
                 Debug.LogError(error);
@@ -143,8 +201,12 @@ namespace CQ.Runtime
                 return;
             }
             _ui.ClearError();
-            _engine = BattleEngine.Create(seed + _levelIndex, chars.items, level, catalog, formation.items[0]);
-            RestoreFormation();
+            var known = _party == null ? null : new HashSet<string>(_party.Available.Select(character => character.id));
+            _party = new PartyRoster(chars.items, level.players, _party);
+            if (known != null)
+                _newCompanion = _party.Available.FirstOrDefault(character => !known.Contains(character.id))?.id ?? _newCompanion;
+            _engine = BattleEngine.Create(seed + _levelIndex, chars.items, level, catalog, formation.items[0], _party.Deployment);
+            layout.setupSpread = 1.15f;
             SpawnWorld();
             RefreshWorld();
             RefreshSetup();
@@ -153,7 +215,11 @@ namespace CQ.Runtime
 
         private void SpawnWorld()
         {
-            if (_worldRoot != null) Destroy(_worldRoot.gameObject);
+            if (_worldRoot != null)
+            {
+                _worldRoot.gameObject.SetActive(false);
+                Destroy(_worldRoot.gameObject);
+            }
             _views.Clear();
             _worldRoot = new GameObject("BattleWorld").transform;
             _worldRoot.SetParent(transform, false);
@@ -215,22 +281,33 @@ namespace CQ.Runtime
             }
         }
 
-        private void RefreshSetup() => _formationDrag?.RefreshAvailability();
+        private void RefreshSetup()
+        {
+            _formationDrag?.RefreshAvailability();
+            if (_engine != null && _engine.Flow == BattleFlow.Setup && _party != null) _ui.Roster.Show(_party, _newCompanion);
+            else _ui.Roster.gameObject.SetActive(false);
+            Canvas.ForceUpdateCanvases();
+            UpdateCameraViewport();
+        }
 
         private void RefreshHud()
         {
             if (_ui == null) return;
             bool setup = _engine != null && _engine.Flow == BattleFlow.Setup;
             _ui.StartBattleButton.gameObject.SetActive(setup);
-            _ui.StartBattleButton.interactable = setup;
+            _ui.StartBattleButton.interactable = setup && _party != null && _party.CanStart;
         }
 
         private void StartBattleAction()
         {
             if (_engine == null || _engine.Flow != BattleFlow.Setup) return;
+            _ui.Skills.Hide();
             _formationDrag?.CancelAndSnap();
             SaveFormation();
             if (!_engine.StartBattle()) return;
+            layout.setupSpread = 0f;
+            foreach (var unit in _engine.Ctx.Units)
+                if (_views.TryGetValue(unit.Id, out var view)) view.SetPosition(PositioningView.Position(unit, layout), unit);
             _audio.Play(BattleSound.Select);
             RefreshWorld();
             RefreshSetup();
@@ -339,13 +416,17 @@ namespace CQ.Runtime
             if (sound.HasValue) _audio.Play(sound.Value);
             string action = UnitName(result.ActorId) + "〔" + ActionTypeLabel(result.ActionType) + " · " + result.ActionName + "〕";
             if (result.ActionType == "ult") _ui.ShowFeedback(action, new Color(1f, 0.85f, 0.3f));
-            foreach (var target in result.Hits.Where(hit => hit.HpDamage > 0).Select(hit => hit.TargetUnitId).Distinct())
-                if (_views.TryGetValue(target, out var hitView))
-                    BattleEffect.Spawn(hitView, "slash", result.ActionType == "ult" ? new Color(1f, 0.8f, 0.25f) :
-                        Color.white, result.ActionType == "ult" ? 1.25f : 1f);
-            foreach (var target in result.Heals.Where(heal => heal.HpRestored > 0).Select(heal => heal.TargetUnitId).Distinct())
-                if (_views.TryGetValue(target, out var healedView))
+            foreach (var hits in result.Hits.Where(hit => hit.HpDamage > 0).GroupBy(hit => hit.TargetUnitId))
+                if (_views.TryGetValue(hits.Key, out var hitView))
+                    hitView.PlayDamageHits(hits.Select(hit => hit.HpDamage), result.ActionType == "ult");
+            foreach (var heals in result.Heals.Where(heal => heal.HpRestored > 0).GroupBy(heal => heal.TargetUnitId))
+                if (_views.TryGetValue(heals.Key, out var healedView))
+                {
+                    int amount = heals.Sum(heal => heal.HpRestored);
+                    healedView.FloatText("+" + amount, Color.green, amount);
+                    healedView.Flash(amount);
                     BattleEffect.Spawn(healedView, "heal", new Color(0.35f, 1f, 0.57f));
+                }
             foreach (var change in result.UnitChanges)
             {
                 if (!_views.TryGetValue(change.UnitId, out var view)) continue;
@@ -355,10 +436,6 @@ namespace CQ.Runtime
                 if (!change.After.IsDead && gainedStatuses.Count > 0)
                     BattleEffect.Spawn(view, "ring", gainedStatuses.Any(status => status.Type == StatusType.Stun)
                         ? new Color(0.3f, 0.6f, 1f) : new Color(1f, 0.28f, 0.38f), 0.75f);
-                if (change.HpDelta == 0) continue;
-                view.FloatText((change.HpDelta > 0 ? "+" : "") + change.HpDelta,
-                    change.HpDelta > 0 ? Color.green : Color.red, change.HpDelta);
-                view.Flash(change.HpDelta);
             }
             _presentedSequence = result.Sequence;
         }

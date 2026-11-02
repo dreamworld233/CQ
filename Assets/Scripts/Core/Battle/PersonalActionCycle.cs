@@ -21,6 +21,7 @@ namespace CQ.Core.Battle
         private PersonalActionKind? _active;
 
         public int Opportunities { get; private set; }
+        public int SpecialInterval => _specialInterval;
         public bool IsOccupied => _active.HasValue;
         public bool IsSpecialDue => Opportunities + 1 - _lastSpecial >= _specialInterval;
 

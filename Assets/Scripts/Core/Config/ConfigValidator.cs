@@ -26,6 +26,7 @@ namespace CQ.Core.Config
             if (!Nonnegative(character.baseDefense)) return "baseDefense 须为0~1000000";
             if (!Positive(character.baseSpeed)) return "baseSpeed 须为1~1000000";
             if (!Formation.IsValidSlot(character.defaultSlot)) return "defaultSlot 非法";
+            if (!string.IsNullOrEmpty(character.element) && !CharacterElements.IsValid(character.element)) return "element 非法";
             if (!Positive(character.maxEnergy)) return "maxEnergy 须为1~1000000";
             if (character.initialEnergy < 0 || character.initialEnergy > character.maxEnergy)
                 return "initialEnergy 须为0~maxEnergy";
@@ -116,9 +117,9 @@ namespace CQ.Core.Config
         public static string ValidateFormation(FormationConfig config) => config == null ? "阵型配置为空" : null;
 
         public static string ValidateLevelReferences(LevelConfig level, IEnumerable<CharacterConfig> characters,
-            IReadOnlyDictionary<string, EnemyConfig> enemies)
+            IReadOnlyDictionary<string, EnemyConfig> enemies, bool selectableRoster = false)
         {
-            string error = ValidateLevel(level);
+            string error = ValidateLevel(level, selectableRoster);
             if (error != null) return error;
             if (characters == null || enemies == null) return "角色或敌人目录为空";
             var catalog = new Dictionary<string, CharacterConfig>();
@@ -137,10 +138,13 @@ namespace CQ.Core.Config
                     if (!catalog.TryGetValue(id, out var character)) return "关卡角色不存在: " + id;
                     roster.Add(character);
                 }
-            if (roster.Count == 0 || roster.Count > Formation.Capacity) return "关卡角色数量须为1~5";
-            var occupied = new HashSet<string>();
-            foreach (var character in roster)
-                if (!occupied.Add(character.defaultSlot)) return "角色初始槽位重复: " + character.defaultSlot;
+            if (roster.Count == 0 || (!selectableRoster && roster.Count > Formation.Capacity)) return "关卡角色数量非法";
+            if (!selectableRoster)
+            {
+                var occupied = new HashSet<string>();
+                foreach (var character in roster)
+                    if (!occupied.Add(character.defaultSlot)) return "角色初始槽位重复: " + character.defaultSlot;
+            }
             foreach (var pair in enemies)
             {
                 error = ValidateEnemy(pair.Value);
@@ -160,7 +164,9 @@ namespace CQ.Core.Config
             return null;
         }
 
-        public static string ValidateLevel(LevelConfig level)
+        public static string ValidateLevel(LevelConfig level) => ValidateLevel(level, true);
+
+        public static string ValidateLevel(LevelConfig level, bool selectableRoster)
         {
             if (level == null) return "空对象";
             if (level.id <= 0) return "id 须 > 0";
@@ -168,7 +174,7 @@ namespace CQ.Core.Config
             if (level.waves == null || level.waves.Count != 1) return "首版关卡须恰有一波敌人";
             if (level.players != null)
             {
-                if (level.players.Length == 0 || level.players.Length > Formation.Capacity) return "players 数量非法";
+                if (level.players.Length == 0 || (!selectableRoster && level.players.Length > Formation.Capacity)) return "players 数量非法";
                 var players = new HashSet<string>();
                 foreach (string id in level.players)
                     if (string.IsNullOrWhiteSpace(id) || !players.Add(id)) return "players 含空值或重复角色";

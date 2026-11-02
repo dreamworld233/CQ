@@ -1,4 +1,6 @@
 using CQ.Core.Combat;
+using CQ.Core.Config;
+using System.Linq;
 using NUnit.Framework;
 
 public class DamageTests
@@ -22,6 +24,104 @@ public class DamageTests
         Assert.AreEqual(before - expected, target.Hp);
         Assert.AreEqual(attack, source.BaseAttack);
         Assert.AreEqual(defense, target.BaseDefense);
+    }
+
+    [Test]
+    public void FiveElementMatchupsCoverEveryPairWithoutDoubleMultiplication()
+    {
+        string[] elements = { "metal", "wood", "water", "fire", "earth" };
+        int[,] expected = {
+            { 100, 200, 100, 50, 100 }, { 50, 100, 100, 100, 200 },
+            { 100, 100, 100, 200, 50 }, { 200, 100, 50, 100, 100 }, { 100, 50, 200, 100, 100 }
+        };
+        for (int source = 0; source < elements.Length; source++)
+            for (int target = 0; target < elements.Length; target++)
+                Assert.AreEqual(expected[source, target], CharacterElements.DamageMultiplierPercent(elements[source], elements[target]),
+                    elements[source] + " -> " + elements[target]);
+        foreach (string missing in new[] { null, "", "unknown" })
+        {
+            Assert.AreEqual(100, CharacterElements.DamageMultiplierPercent(missing, "metal"));
+            Assert.AreEqual(100, CharacterElements.DamageMultiplierPercent("metal", missing));
+        }
+    }
+
+    [TestCase("metal", "wood", 180)]
+    [TestCase("wood", "metal", 45)]
+    [TestCase("metal", "metal", 90)]
+    [TestCase("metal", "water", 90)]
+    [TestCase(null, "wood", 90)]
+    public void ElementsTravelFromConfigToUnits_AndScaleDamageAfterDefense(string sourceElement, string targetElement, int expected)
+    {
+        var hero = AutoBattleTestData.Hero(attack: 101);
+        var enemy = AutoBattleTestData.Enemy(defense: 11);
+        hero.element = sourceElement;
+        enemy.element = targetElement;
+        var engine = AutoBattleTestData.Engine(heroes: new[] { hero }, enemies: new[] { enemy });
+        Assert.AreEqual(sourceElement, engine.Players[0].Element);
+        Assert.AreEqual(targetElement, engine.Enemies[0].Element);
+        Assert.AreEqual(expected, Damage.Apply(engine.Ctx, engine.Players[0], engine.Enemies[0], 100));
+    }
+
+    [TestCase(16, 11, "wood", "metal", 2)]
+    [TestCase(1, 100, "wood", "metal", 1)]
+    [TestCase(1, 100, "metal", "wood", 2)]
+    [TestCase(int.MaxValue, 0, "metal", "wood", int.MaxValue)]
+    public void ElementDamageFloorsOnceAfterDefense_StaysPositiveAndDoesNotOverflow(int attack, int defense, string source, string target, int expected)
+    {
+        var attacker = new Unit("a", Team.Player) { BaseAttack = attack, Element = source };
+        var defender = new Unit("b", Team.Enemy) { BaseDefense = defense, Element = target };
+        Assert.AreEqual(expected, ActionStatuses.CalculateDamage(attacker, new ActionStatuses(), defender, new ActionStatuses(), 100));
+    }
+
+    [Test]
+    public void ElementModifierFollowsEffectiveBuffedDamage_NotRawAttack()
+    {
+        var hero = AutoBattleTestData.Hero(attack: 101);
+        hero.element = "metal";
+        var enemy = AutoBattleTestData.Enemy(defense: 51);
+        enemy.element = "wood";
+        var engine = AutoBattleTestData.Engine(heroes: new[] { hero }, enemies: new[] { enemy });
+        engine.Ctx.StatesOf("hero").Apply(StatusType.AttackUp, 25, 2);
+        engine.Ctx.StatesOf("enemy_0").Apply(StatusType.DefenseUp, 25, 2);
+        Assert.AreEqual(378, Damage.Apply(engine.Ctx, engine.Players[0], engine.Enemies[0], 200));
+    }
+
+    [Test]
+    public void ElementalMultiHitStillChargesOnce_AndLethalDamageStopsRemainingSegments()
+    {
+        var hero = AutoBattleTestData.Hero(attack: 10);
+        hero.element = "metal";
+        AutoBattleTestData.SetSkill(hero, AutoBattleTestData.Skill("basic", AutoBattleTestData.Effect(hits: 3)));
+        var enemy = AutoBattleTestData.Enemy(hp: 1000);
+        enemy.element = "wood";
+        var engine = AutoBattleTestData.Engine(heroes: new[] { hero }, enemies: new[] { enemy });
+        engine.StartBattle();
+        var result = BattleTestDriver.NextAction(engine, "hero");
+        CollectionAssert.AreEqual(new[] { 20, 20, 20 }, result.Hits.Select(hit => hit.HpDamage));
+        Assert.AreEqual(1, result.Charges.Count(charge => charge.Trigger == "hit"));
+        Assert.AreEqual(1, result.Charges.Count(charge => charge.Trigger == "action"));
+        enemy.maxHp = 25;
+        engine = AutoBattleTestData.Engine(heroes: new[] { hero }, enemies: new[] { enemy });
+        engine.StartBattle();
+        result = BattleTestDriver.NextAction(engine, "hero");
+        CollectionAssert.AreEqual(new[] { 20, 5 }, result.Hits.Select(hit => hit.HpDamage));
+        Assert.IsTrue(result.Hits.Last().TargetDead);
+        Assert.AreEqual(0, engine.Enemies[0].Hp);
+    }
+
+    [Test]
+    public void ElementDoesNotScaleHealing()
+    {
+        var hero = AutoBattleTestData.Hero(hp: 100);
+        hero.element = "metal";
+        var enemy = AutoBattleTestData.Enemy();
+        enemy.element = "wood";
+        var engine = AutoBattleTestData.Engine(heroes: new[] { hero }, enemies: new[] { enemy });
+        var unit = engine.Players[0];
+        unit.Hp = 50;
+        SkillResolver.Resolve(engine.Ctx, unit, AutoBattleTestData.Skill("special",
+            AutoBattleTestData.Effect("heal", "self", multiplier: 0, hits: 0, percent: 25)));
+        Assert.AreEqual(75, unit.Hp);
     }
 
     [Test]

@@ -15,6 +15,86 @@ using UnityEngine.UI;
 public class BattleFeedbackTests
 {
     [Test]
+    public void HitFeedbackUsesActualSegmentsAtIntervals_AndPendingHitsKeepPresentationOccupied()
+    {
+        var owner = new GameObject("SegmentFeedbackTest");
+        try
+        {
+            var view = owner.AddComponent<UnitView>();
+            view.Setup(new Unit("grunt_0", Team.Enemy) { Hp = 100, MaxHp = 100, MaxUlt = 100, SlotId = "front1" }, Color.white);
+            view.PlayDamageHits(new[] { 20, 7, 0 }, false);
+            Assert.AreEqual(1, owner.GetComponentsInChildren<FloatingText>().Length);
+            Assert.AreEqual("-20", owner.GetComponentInChildren<FloatingText>().GetComponent<TextMeshPro>().text);
+            typeof(UnitView).GetField("_flashT", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(view, 0f);
+            typeof(UnitView).GetField("_shakeT", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(view, 0f);
+            Assert.IsFalse(view.FeedbackComplete, "待播段不能被提前确认");
+            view.AdvanceDamageFeedback(UnitView.HitInterval * 0.5f);
+            Assert.AreEqual(1, owner.GetComponentsInChildren<FloatingText>().Length);
+            view.AdvanceDamageFeedback(UnitView.HitInterval * 0.5f + 0.001f);
+            var floats = owner.GetComponentsInChildren<FloatingText>();
+            CollectionAssert.AreEquivalent(new[] { "-20", "-7" }, floats.Select(text => text.GetComponent<TextMeshPro>().text));
+            Assert.AreEqual(2, floats.Select(text => text.transform.localPosition.x).Distinct().Count());
+            Assert.AreEqual(2, owner.GetComponentsInChildren<BattleEffect>().Count(effect => effect.name == "Effect_slash"));
+            view.AdvanceDamageFeedback(10f);
+            Assert.AreEqual(2, owner.GetComponentsInChildren<FloatingText>().Length, "不能重播或显示未实际发生的段");
+        }
+        finally { UnityEngine.Object.DestroyImmediate(owner); }
+    }
+
+    [Test]
+    public void ControllerPresentsHitRecordsRatherThanAggregateDelta_AndIgnoresDuplicateSequence()
+    {
+        var owner = new GameObject("ConsumeSegmentsTest");
+        try
+        {
+            var hero = AutoBattleTestData.Hero(attack: 10);
+            AutoBattleTestData.SetSkill(hero, AutoBattleTestData.Skill("basic", AutoBattleTestData.Effect(hits: 3)));
+            var engine = AutoBattleTestData.Engine(heroes: new[] { hero }, enemies: new[] { AutoBattleTestData.Enemy(hp: 25) });
+            engine.StartBattle();
+            var result = BattleTestDriver.NextAction(engine, "hero");
+            var controller = owner.AddComponent<BattleController>();
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            typeof(BattleController).GetField("_engine", flags).SetValue(controller, engine);
+            typeof(BattleController).GetField("_audio", flags).SetValue(controller, BattleAudio.Build(owner.transform));
+            var views = (Dictionary<string, UnitView>)typeof(BattleController).GetField("_views", flags).GetValue(controller);
+            var target = engine.Enemies[0];
+            var targetGo = new GameObject("Target");
+            targetGo.transform.SetParent(owner.transform);
+            var view = targetGo.AddComponent<UnitView>();
+            view.Setup(target, Color.white);
+            views.Add(target.Id, view);
+            var consume = typeof(BattleController).GetMethod("ConsumeAction", flags);
+            consume.Invoke(controller, new object[] { result });
+            Assert.AreEqual(1, targetGo.GetComponentsInChildren<FloatingText>().Length);
+            view.AdvanceDamageFeedback(UnitView.HitInterval * 2f + 0.001f);
+            var floats = targetGo.GetComponentsInChildren<FloatingText>();
+            CollectionAssert.AreEqual(new[] { "-10", "-10", "-5" }, floats.Select(text => text.GetComponent<TextMeshPro>().text));
+            Assert.IsFalse(floats.Any(text => text.GetComponent<TextMeshPro>().text == "-25"));
+            consume.Invoke(controller, new object[] { result });
+            view.AdvanceDamageFeedback(10f);
+            Assert.AreEqual(3, targetGo.GetComponentsInChildren<FloatingText>().Length);
+            Assert.AreEqual(0, target.Hp, "展示不得重复扣血");
+        }
+        finally { UnityEngine.Object.DestroyImmediate(owner); }
+    }
+
+    [Test]
+    public void DisablingViewCancelsRemainingHitFeedback()
+    {
+        var owner = new GameObject("CancelHitFeedbackTest");
+        try
+        {
+            var view = owner.AddComponent<UnitView>();
+            view.Setup(new Unit("enemy_0", Team.Enemy) { Hp = 100, MaxHp = 100, MaxUlt = 100, SlotId = "front1" }, Color.white);
+            view.PlayDamageHits(new[] { 10, 10, 10 }, false);
+            typeof(UnitView).GetMethod("OnDisable", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(view, null);
+            view.AdvanceDamageFeedback(10f);
+            Assert.AreEqual(1, owner.GetComponentsInChildren<FloatingText>().Length);
+        }
+        finally { UnityEngine.Object.DestroyImmediate(owner); }
+    }
+
+    [Test]
     public void PermanentStatusLabel_UsesStrongestEffect_AndReturnsAfterTemporaryBuffExpires()
     {
         var owner = new GameObject("PermanentLabelTest");
@@ -204,9 +284,13 @@ public class BattleFeedbackTests
             Assert.AreEqual("特殊 · 增益", action.text);
             Assert.AreEqual("攻击 +25% · 剩余 2 次行动", status.Description);
             Assert.IsNull(owner.transform.Find("StatusText"));
-            Assert.Greater(owner.transform.Find("HpBg").localPosition.y, 0.75f);
-            Assert.Greater(owner.transform.Find("UltBg").localPosition.y, 0.75f);
-            Assert.Greater(status.transform.localPosition.y, owner.transform.Find("HpBg").localPosition.y);
+            var hud = owner.transform.Find("Hud");
+            Assert.IsNotNull(hud);
+            Assert.Less(hud.localPosition.y, -0.75f);
+            Assert.Less(hud.Find("HpBg").position.y, owner.transform.Find("Art").GetComponent<SpriteRenderer>().bounds.min.y);
+            Assert.Less(hud.Find("UltBg").position.y, hud.Find("HpBg").position.y);
+            Assert.AreEqual(hud, status.transform.parent);
+            Assert.Less(status.transform.position.y, hud.Find("UltBg").position.y);
             Assert.IsTrue(energy.gameObject.activeSelf);
             float partialWidth = energy.transform.localScale.x;
             unit.Ult = 100;
@@ -214,6 +298,52 @@ public class BattleFeedbackTests
             Assert.Greater(energy.transform.localScale.x, partialWidth);
             Assert.AreEqual("能量 100/100", stat.text);
             Assert.IsFalse(status.gameObject.activeSelf);
+        }
+        finally { UnityEngine.Object.DestroyImmediate(owner); }
+    }
+
+    [Test]
+    public void FootHudFitsAllFiveSlotsWithoutShrinkingArtOrOverlappingRows()
+    {
+        var owner = new GameObject("FootHudLayoutTest");
+        try
+        {
+            var layout = new BattleLayout { setupSpread = 1.15f };
+            foreach (Team team in new[] { Team.Player, Team.Enemy })
+            {
+                var artBounds = new Dictionary<string, Bounds>();
+                var hudBounds = new Dictionary<string, Bounds>();
+                foreach (string slot in new[] { "front1", "front2", "back1", "back2", "back3" })
+                {
+                    var go = new GameObject(team + "_" + slot);
+                    go.transform.SetParent(owner.transform);
+                    go.transform.localScale = Vector3.one * 0.72f;
+                    go.transform.position = PositioningView.Position(team, slot, layout);
+                    var unit = new Unit(team == Team.Player ? "sword" : "lord_0", team)
+                        { Name = "布局验证", Hp = 100, MaxHp = 100, Ult = 20, MaxUlt = 100, SlotId = slot };
+                    var view = go.AddComponent<UnitView>();
+                    view.Setup(unit, Color.white);
+                    view.Refresh(unit, "特殊 · 连斩", new[] {
+                        new StatusEffect { Type = StatusType.AttackUp, Percent = 10, Turn = "permanent" },
+                        new StatusEffect { Type = StatusType.DefenseUp, Percent = 20, Duration = 2 },
+                        new StatusEffect { Type = StatusType.Stun, Duration = 1 }
+                    });
+                    var art = go.transform.Find("Art").GetComponent<SpriteRenderer>();
+                    var hud = go.transform.Find("Hud");
+                    Assert.AreEqual(go.transform, hud.parent);
+                    Assert.AreEqual(art.transform.localScale.x, art.transform.localScale.y, 0.0001f);
+                    Assert.AreEqual(1.08f, art.bounds.size.y, 0.001f, "不能缩小立绘给HUD腾空间");
+                    var bounds = hud.GetComponentInChildren<Renderer>().bounds;
+                    foreach (var renderer in hud.GetComponentsInChildren<Renderer>()) bounds.Encapsulate(renderer.bounds);
+                    Assert.Less(bounds.max.y, art.bounds.min.y, team + "/" + slot + " HUD遮住立绘");
+                    Assert.Greater(bounds.min.y, -5f, team + "/" + slot + " HUD被屏幕底部裁切");
+                    Assert.Less(art.bounds.max.y, 5f, team + "/" + slot + " 立绘顶部被裁切");
+                    artBounds.Add(slot, art.bounds);
+                    hudBounds.Add(slot, bounds);
+                }
+                foreach (var pair in new[] { new[] { "front1", "front2" }, new[] { "back1", "back2" }, new[] { "back2", "back3" } })
+                    Assert.Greater(hudBounds[pair[0]].min.y, artBounds[pair[1]].max.y, "上下排HUD和立绘重叠");
+            }
         }
         finally { UnityEngine.Object.DestroyImmediate(owner); }
     }
@@ -267,7 +397,7 @@ public class BattleFeedbackTests
             var view = owner.AddComponent<UnitView>();
             view.Setup(unit, Color.white);
             var position = owner.transform.position;
-            var hpPosition = owner.transform.Find("HpBg").position;
+            var hpPosition = owner.transform.Find("Hud/HpBg").position;
             var flags = BindingFlags.Instance | BindingFlags.NonPublic;
             view.PlayAction(action);
             float remaining = (float)typeof(UnitView).GetField("_actionT", flags).GetValue(view);
@@ -277,7 +407,7 @@ public class BattleFeedbackTests
             if (duration > 0f) typeof(UnitView).GetField("_actionT", flags).SetValue(view, duration * 0.5f);
             typeof(UnitView).GetMethod("UpdateMotion", flags).Invoke(view, new object[] { 0f });
             Assert.AreEqual(position, owner.transform.position);
-            Assert.AreEqual(hpPosition, owner.transform.Find("HpBg").position);
+            Assert.AreEqual(hpPosition, owner.transform.Find("Hud/HpBg").position);
             Assert.AreEqual(Vector2.zero, owner.GetComponent<BoxCollider2D>().offset);
             if (duration > 0f) Assert.AreNotEqual(Vector3.zero, owner.transform.Find("Art").localPosition);
         }
@@ -302,7 +432,7 @@ public class BattleFeedbackTests
             var unit = new Unit(id, team) { Name = id, Hp = 100, MaxHp = 100, MaxUlt = 100, SlotId = "front1" };
             var view = owner.AddComponent<UnitView>();
             view.Setup(unit, Color.white);
-            var hp = owner.transform.Find("HpBg").position;
+            var hp = owner.transform.Find("Hud/HpBg").position;
             var art = owner.transform.Find("Art");
             float delay = view.PlayAction(action, target);
             Assert.Greater(delay, 0f);
@@ -313,7 +443,7 @@ public class BattleFeedbackTests
             Assert.That(Vector3.Distance(art.position, target), Is.EqualTo(0.9f).Within(0.01f));
             Assert.Greater(Vector3.Distance(art.position, home), 2f);
             Assert.AreEqual(home, owner.transform.position);
-            Assert.AreEqual(hp, owner.transform.Find("HpBg").position);
+            Assert.AreEqual(hp, owner.transform.Find("Hud/HpBg").position);
             Assert.AreEqual("front1", unit.SlotId);
             Assert.AreEqual(25, art.GetComponent<SpriteRenderer>().sortingOrder);
             typeof(UnitView).GetField("_actionT", flags).SetValue(view, 0f);
@@ -369,18 +499,18 @@ public class BattleFeedbackTests
                 views.Add(unit.Id, view);
             }
             var victim = engine.Ctx.Units.Single(u => u.Team == Team.Enemy);
-            string before = views[victim.Id].transform.Find("HpText").GetComponent<TextMeshPro>().text;
+            string before = views[victim.Id].transform.Find("Hud/HpText").GetComponent<TextMeshPro>().text;
             engine.StartBattle();
             int generation = (int)typeof(BattleController).GetField("_generation", flags).GetValue(controller);
             var drive = (IEnumerator)typeof(BattleController).GetMethod("Drive", flags).Invoke(controller, new object[] { engine, generation });
             Assert.IsTrue(drive.MoveNext());
             Assert.IsTrue(drive.MoveNext());
             Assert.AreEqual("basic", engine.CurrentAction.ActionType);
-            Assert.AreEqual(before, views[victim.Id].transform.Find("HpText").GetComponent<TextMeshPro>().text);
+            Assert.AreEqual(before, views[victim.Id].transform.Find("Hud/HpText").GetComponent<TextMeshPro>().text);
             Assert.AreEqual(0L, typeof(BattleController).GetField("_presentedSequence", flags).GetValue(controller));
             typeof(BattleController).GetMethod("StopDriver", flags).Invoke(controller, null);
             Assert.IsFalse(drive.MoveNext());
-            Assert.AreEqual(before, views[victim.Id].transform.Find("HpText").GetComponent<TextMeshPro>().text);
+            Assert.AreEqual(before, views[victim.Id].transform.Find("Hud/HpText").GetComponent<TextMeshPro>().text);
         }
         finally { UnityEngine.Object.DestroyImmediate(owner); }
     }

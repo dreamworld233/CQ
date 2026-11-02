@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using CQ.Core.Config;
 
 namespace CQ.Core.Combat
 {
@@ -88,8 +89,9 @@ namespace CQ.Core.Combat
             if (multiplierPercent <= 0) throw new ArgumentOutOfRangeException(nameof(multiplierPercent));
             decimal attack = attackerStatuses.EffectiveAttack(attacker);
             decimal defense = defenderStatuses.EffectiveDefense(defender);
-            return (int)Math.Min(int.MaxValue,
-                Math.Max(1m, decimal.Floor(attack * multiplierPercent / 100m) - decimal.Floor(defense)));
+            decimal baseDamage = Math.Max(1m, decimal.Floor(attack * multiplierPercent / 100m) - decimal.Floor(defense));
+            int elementPercent = CharacterElements.DamageMultiplierPercent(attacker.Element, defender.Element);
+            return (int)Math.Min(int.MaxValue, Math.Max(1m, decimal.Floor(baseDamage * elementPercent / 100m)));
         }
     }
 }

@@ -1,6 +1,7 @@
 {
   "id": "claw",
   "name": "爪牙",
+  "element": "fire",
   "maxHp": 300,
   "baseAttack": 38,
   "baseDefense": 12,

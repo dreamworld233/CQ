@@ -1,6 +1,7 @@
 {
   "id": "guard",
   "name": "护卫",
+  "element": "earth",
   "maxHp": 520,
   "baseAttack": 30,
   "baseDefense": 28,

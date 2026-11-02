@@ -16,14 +16,14 @@ namespace CQ.Runtime
         // 数值条布局（世界单位）。BarW 须小于 teamGap(2.0)，否则相邻单位的条视觉粘连。
         private const float BarW = 1.9f;           // 条全宽
         private const float BarInset = 0.12f;      // 填充相对底框的左右内缩（形成描边观感）
-        private const float HpY = 1.13f;           // 头顶血条，与立绘顶部留出间隙
+        private const float HpY = -0.22f;          // 相对独立Hud节点，位于脚下名字之后
         private const float HpBgH = 0.30f;
         private const float HpFillH = 0.22f;
-        private const float UltY = 0.83f;
+        private const float UltY = -0.51f;
         private const float SubBgH = 0.20f;
         private const float SubFillH = 0.14f;
-        private const float LabelY = -1.04f;
-        private const float FloatY = 0.15f;         // 数值从躯干上浮，避开头顶HUD
+        private const float LabelY = 0.12f;
+        private const float FloatY = 0.15f;         // 数值保留在角色躯干，避开脚下HUD
 
         private const float HpTextH = 0.20f;
         private const float LabelTextH = 0.25f;
@@ -37,6 +37,7 @@ namespace CQ.Runtime
         private static Sprite _white;
 
         private SpriteRenderer _sr;
+        private Transform _hud;
         private TextMeshPro _label;
         private TextMeshPro _stat;
         private TextMeshPro _hpText;
@@ -68,10 +69,17 @@ namespace CQ.Runtime
         private int _idleSortOrder;
         private bool _dead;
         private float _deathAge;
+        public const float HitInterval = 0.14f;
+        private readonly Queue<int> _pendingDamage = new Queue<int>();
+        private float _hitWait;
+        private int _hitIndex;
+        private bool _multiHit;
+        private bool _ultimateHit;
 
         public string UnitId { get; private set; }
         public float PlaybackSpeed { get; set; } = 1f;
-        public bool FeedbackComplete => _flashT <= 0f && _shakeT <= 0f && _actionT <= 0f && (!_dead || _deathAge >= 0.45f);
+        public Bounds InspectionBounds => _sr != null ? _sr.bounds : new Bounds(transform.position, Vector3.one);
+        public bool FeedbackComplete => _pendingDamage.Count == 0 && _flashT <= 0f && _shakeT <= 0f && _actionT <= 0f && (!_dead || _deathAge >= 0.45f);
 
         public void Setup(Unit unit, Color teamColor)
         {
@@ -100,16 +108,19 @@ namespace CQ.Runtime
             _artScale = artGo.transform.localScale;
             _sr.sortingOrder = _idleSortOrder = unit.Row == "front" ? 10 : 5;
 
-            _action = TmpKit.MakeWorldText(transform, "ActionText", new Vector3(0f, 2.12f, 0f),
+            _hud = new GameObject("Hud").transform;
+            _hud.SetParent(transform, false);
+            _hud.localPosition = new Vector3(0f, -1.08f, 0f);
+            _action = TmpKit.MakeWorldText(_hud, "ActionText", new Vector3(0f, -1.30f, 0f),
                 UiKit.FontBold, ActionTextH, Color.yellow, 55);
             TmpKit.SetOutline(_action, new Color(0f, 0f, 0f, 0.9f), 0.2f);
 
             MakeBars();
-            _label = TmpKit.MakeWorldText(transform, "Label", new Vector3(0f, LabelY, 0f),
+            _label = TmpKit.MakeWorldText(_hud, "Label", new Vector3(0f, LabelY, 0f),
                 UiKit.FontBold, LabelTextH, Color.white, 55, FontStyles.Normal, unit.Name);
             TmpKit.SetOutline(_label, new Color(0f, 0f, 0f, 0.9f), 0.2f);
             foreach (StatusType type in System.Enum.GetValues(typeof(StatusType)))
-                _statusIcons.Add(StatusIconView.Build(transform, type, _statusIcons.Count));
+                _statusIcons.Add(StatusIconView.Build(_hud, type, _statusIcons.Count));
 
             _formationSorting = gameObject.AddComponent<SortingGroup>();
             _formationSorting.sortingOrder = 100;
@@ -127,8 +138,7 @@ namespace CQ.Runtime
             col.size = new Vector2(ColliderW, ColliderH);
 
             Refresh(unit, "");
-            _formationHudRenderers = GetComponentsInChildren<Renderer>(true)
-                .Where(renderer => renderer != _sr && renderer != _shadow).ToArray();
+            _formationHudRenderers = _hud.GetComponentsInChildren<Renderer>(true);
         }
 
         public void SetPosition(Vector3 position, Unit unit)
@@ -211,6 +221,38 @@ namespace CQ.Runtime
             FloatingText.Spawn(transform, text, color, FloatY, magnitude);
         }
 
+        /// <summary>只播放结算记录的实际扣血；同目标逐段出字，不再次扣血或按总量补段。</summary>
+        public void PlayDamageHits(IEnumerable<int> amounts, bool ultimate)
+        {
+            _pendingDamage.Clear();
+            foreach (int amount in amounts)
+                if (amount > 0) _pendingDamage.Enqueue(amount);
+            _multiHit = _pendingDamage.Count > 1;
+            _ultimateHit = ultimate;
+            _hitIndex = 0;
+            _hitWait = 0f;
+            AdvanceDamageFeedback(0f);
+        }
+
+        public void AdvanceDamageFeedback(float playbackDeltaTime)
+        {
+            if (_pendingDamage.Count == 0) return;
+            _hitWait -= Mathf.Max(0f, playbackDeltaTime);
+            while (_pendingDamage.Count > 0 && _hitWait <= 0f)
+            {
+                int amount = _pendingDamage.Dequeue();
+                float x = _multiHit ? (_hitIndex % 2 == 0 ? -0.55f : 0.55f) : 0f;
+                FloatingText.Spawn(transform, "-" + amount, Color.red, FloatY, amount, x);
+                Flash(-amount);
+                BattleEffect.Spawn(this, "slash", _ultimateHit ? new Color(1f, 0.8f, 0.25f) : Color.white,
+                    _ultimateHit ? 1.25f : 1f);
+                _hitIndex++;
+                _hitWait += HitInterval;
+            }
+        }
+
+        private void OnDisable() => _pendingDamage.Clear();
+
         /// <summary>受击/受治疗反馈：闪白（伤害用白、治疗用绿）+ 伤害附带横向抖动。</summary>
         public void Flash(int hpDelta)
         {
@@ -291,6 +333,7 @@ namespace CQ.Runtime
             }
 
             UpdateMotion(dt);
+            AdvanceDamageFeedback(dt);
 
             // 低血脉冲：≤30% 时血条呼吸，残血一眼可见
             if (_hpFill != null)
@@ -344,14 +387,14 @@ namespace CQ.Runtime
                 MakeBar("HpTick" + i, HpY, HpBgH, 0.035f, new Color(0.02f, 0.02f, 0.03f, 0.85f), 37, x);
             }
 
-            _hpText = TmpKit.MakeWorldText(transform, "HpText", new Vector3(0f, HpY, 0f),
+            _hpText = TmpKit.MakeWorldText(_hud, "HpText", new Vector3(0f, HpY, 0f),
                 UiKit.FontBold, HpTextH, Color.white, 56, FontStyles.Normal, "0/0");
             TmpKit.SetOutline(_hpText, new Color(0f, 0f, 0f, 1f), 0.28f);
 
             MakeBar("UltBg", UltY, SubBgH, BarW, new Color(0.05f, 0.06f, 0.09f, 0.98f), 35);
             _ultFill = MakeBar("UltFill", UltY, SubFillH, BarW - BarInset, new Color(1f, 0.85f, 0.25f), 36);
 
-            _stat = TmpKit.MakeWorldText(transform, "StatText", new Vector3(0f, UltY, 0f),
+            _stat = TmpKit.MakeWorldText(_hud, "StatText", new Vector3(0f, UltY, 0f),
                 UiKit.FontBold, StatTextH, Color.white, 56, FontStyles.Normal, "能量 0/0");
             TmpKit.SetOutline(_stat, new Color(0f, 0f, 0f, 0.9f), 0.2f);
         }
@@ -359,7 +402,7 @@ namespace CQ.Runtime
         private SpriteRenderer MakeBar(string goName, float y, float height, float width, Color color, int order, float x = 0f)
         {
             var go = new GameObject(goName);
-            go.transform.SetParent(transform, false);
+            go.transform.SetParent(_hud, false);
             go.transform.localPosition = new Vector3(x, y, 0f);
             go.transform.localScale = new Vector3(width, height, 1f);
             var sr = go.AddComponent<SpriteRenderer>();

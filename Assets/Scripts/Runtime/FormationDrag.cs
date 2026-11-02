@@ -9,7 +9,7 @@ using UnityEngine.EventSystems;
 
 namespace CQ.Runtime
 {
-    /// <summary>布阵输入与落位表现；仅在合法松手时提交真实站位。</summary>
+    /// <summary>角色轻触查看与战前拖拽分流；仅在合法拖拽松手时提交站位。</summary>
     public sealed class FormationDrag : MonoBehaviour
     {
         private const float DropRadius = 0.95f;
@@ -26,6 +26,10 @@ namespace CQ.Runtime
         private string _actorId;
         private int _pointerId;
         private bool _touch;
+        private bool _canDrag;
+        private bool _tapMoved;
+        public Action<string> OnInspect;
+        public Action OnDragStarted;
         private Vector2 _pressPosition;
         private Vector3 _grabOffset;
         private Vector3 _origin;
@@ -61,7 +65,7 @@ namespace CQ.Runtime
         public void RefreshAvailability()
         {
             bool setup = _engine != null && _engine.Flow == BattleFlow.Setup;
-            if (!setup) CancelAndSnap();
+            if (!setup && (_actorId != null || IsSettling)) CancelAndSnap();
             if (_slots != null) _slots.gameObject.SetActive(setup);
             RefreshPreview();
         }
@@ -108,14 +112,16 @@ namespace CQ.Runtime
 
         public bool BeginPointer(int pointerId, Vector2 screenPosition, bool touch)
         {
-            if (_actorId != null || IsSettling || _camera == null || _engine == null ||
-                _engine.Flow != BattleFlow.Setup || OverUi(screenPosition, pointerId)) return false;
+            if (_actorId != null || IsSettling || _camera == null || _engine == null || _engine.Flow != BattleFlow.Setup ||
+                OverUi(screenPosition, pointerId)) return false;
             Vector2 point = WorldPoint(screenPosition);
             var hits = Physics2D.OverlapPointAll(point);
             if (hits.Any(hit => hit.GetComponent<StatusIconView>() != null)) return false;
             var hitView = PickView(hits, point) ?? PickView(Physics2D.OverlapCircleAll(point, 0.35f), point);
             var unit = hitView != null ? _engine.Ctx.GetUnit(hitView.UnitId) : null;
-            if (unit == null || unit.IsDead || unit.Team != Team.Player) return false;
+            if (unit == null) { OnInspect?.Invoke(null); return false; }
+            _canDrag = _engine.Flow == BattleFlow.Setup && !unit.IsDead && unit.Team == Team.Player;
+            _tapMoved = false;
             _actorId = unit.Id;
             _pointerId = pointerId;
             _touch = touch;
@@ -130,10 +136,16 @@ namespace CQ.Runtime
         {
             if (_actorId == null || pointerId != _pointerId) return;
             if (_engine.Flow != BattleFlow.Setup) { CancelAndSnap(); return; }
+            if (!_canDrag)
+            {
+                if ((screenPosition - _pressPosition).sqrMagnitude >= DragThreshold * DragThreshold) _tapMoved = true;
+                return;
+            }
             if (!IsDragging)
             {
                 if ((screenPosition - _pressPosition).sqrMagnitude < DragThreshold * DragThreshold) return;
                 IsDragging = true;
+                OnDragStarted?.Invoke();
                 foreach (var view in _views.Values) view.SetFormationInteraction(true);
             }
             Vector3 position = WorldPoint(screenPosition) + _grabOffset;
@@ -152,23 +164,29 @@ namespace CQ.Runtime
             if (_actorId == null) return;
             string actorId = _actorId;
             bool dragged = IsDragging;
+            bool inspect = !canceled && !dragged && !_tapMoved && OnScreen(screenPosition) && !OverUi(screenPosition, pointerId);
+            bool canDrag = _canDrag;
             bool changed = !canceled && dragged && CandidateSlot != null && CandidateSlot != _sourceSlot &&
                 _engine.Flow == BattleFlow.Setup && _engine.TryMovePlayer(actorId, CandidateSlot);
             _actorId = null;
+            _canDrag = false;
+            _tapMoved = false;
             IsDragging = false;
             CandidateSlot = null;
             _settleAge = 0f;
-            foreach (var unit in _engine.Players)
-            {
-                var view = _views[unit.Id];
-                Vector3 destination = PositioningView.Position(unit, _layout);
-                if ((view.transform.position - destination).sqrMagnitude > 0.00001f)
-                    _settleFrom[unit.Id] = view.transform.position;
-                view.SetFormationFeedback(dragged && unit.Id == actorId, false);
-            }
-            if (!IsSettling) ResetFeedback();
-            RefreshPreview();
+            if (canDrag)
+                foreach (var unit in _engine.Players)
+                {
+                    var view = _views[unit.Id];
+                    Vector3 destination = PositioningView.Position(unit, _layout);
+                    if ((view.transform.position - destination).sqrMagnitude > 0.00001f)
+                        _settleFrom[unit.Id] = view.transform.position;
+                    view.SetFormationFeedback(dragged && unit.Id == actorId, false);
+                }
+            if (canDrag && !IsSettling) ResetFeedback();
+            if (canDrag) RefreshPreview();
             if (changed) _onChanged?.Invoke();
+            if (inspect) OnInspect?.Invoke(actorId);
         }
 
         public void AdvanceSettlement(float dt)
@@ -193,8 +211,10 @@ namespace CQ.Runtime
 
         public void CancelAndSnap()
         {
-            bool active = _actorId != null || IsSettling;
+            bool active = (_actorId != null && _canDrag) || IsSettling;
             _actorId = null;
+            _canDrag = false;
+            _tapMoved = false;
             IsDragging = false;
             CandidateSlot = null;
             _settleFrom.Clear();

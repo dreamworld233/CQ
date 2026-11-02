@@ -68,6 +68,7 @@ namespace CQ.Runtime
         {
             var rt = AddRect(parent, "Button", Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
             var img = rt.gameObject.AddComponent<Image>();
+            UseRoundedBackground(img);
             img.color = bg;
             var btn = rt.gameObject.AddComponent<Button>();
             btn.targetGraphic = img;
@@ -126,6 +127,42 @@ namespace CQ.Runtime
             lrt.sizeDelta = new Vector2(diameter * 0.92f, diameter * 0.34f);
             lrt.anchoredPosition = new Vector2(0f, -diameter * 0.24f);
             label.fontSize = Mathf.Max(12f, Mathf.RoundToInt(label.fontSize * 0.8f));
+        }
+
+        private static Sprite _rounded;
+
+        public static void UseRoundedBackground(Image image)
+        {
+            image.sprite = RoundedRectSprite();
+            image.type = Image.Type.Sliced;
+        }
+
+        /// <summary>共享九宫格圆角底图；边角不随按钮/卡片长宽拉伸，保留矩形点击热区。</summary>
+        public static Sprite RoundedRectSprite()
+        {
+            if (_rounded != null) return _rounded;
+            const int size = 64;
+            const float radius = 12f;
+            var texture = new Texture2D(size, size, TextureFormat.RGBA32, false)
+            {
+                name = "UI_RoundedRect", wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear
+            };
+            var pixels = new Color32[size * size];
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                {
+                    var q = new Vector2(Mathf.Abs(x + 0.5f - size * 0.5f), Mathf.Abs(y + 0.5f - size * 0.5f)) -
+                        Vector2.one * (size * 0.5f - radius);
+                    float distance = new Vector2(Mathf.Max(q.x, 0f), Mathf.Max(q.y, 0f)).magnitude +
+                        Mathf.Min(Mathf.Max(q.x, q.y), 0f) - radius;
+                    pixels[y * size + x] = new Color32(255, 255, 255, (byte)(Mathf.Clamp01(0.5f - distance) * 255f));
+                }
+            texture.SetPixels32(pixels);
+            texture.Apply();
+            _rounded = Sprite.Create(texture, new Rect(0f, 0f, size, size), Vector2.one * 0.5f, 100f, 0,
+                SpriteMeshType.FullRect, Vector4.one * 13f);
+            _rounded.name = "UI_RoundedRect_Sliced";
+            return _rounded;
         }
 
         private static Sprite _circle;

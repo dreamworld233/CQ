@@ -1,6 +1,7 @@
 {
   "id": "lord",
   "name": "领主",
+  "element": "earth",
   "maxHp": 900,
   "baseAttack": 55,
   "baseDefense": 18,

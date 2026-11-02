@@ -16,7 +16,7 @@ namespace CQ.Core.Config
     {
         public int id;
         public string name;
-        public string[] players;
+        public string[] players; // 本关可选伙伴；显式部署入口与默认全员战斗入口共用此目录
         public string tutorialIntro;
         public string[] tutorialHints;
         public List<WaveConfig> waves;

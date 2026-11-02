@@ -85,11 +85,28 @@ public class FormationDragTests
     }
 
     [Test]
+    public void ExpandedSetupCoordinatesRemainSharedByPickingDropAndSettlement()
+    {
+        _layout.setupSpread = 1.15f;
+        foreach (var unit in _engine.Ctx.Units)
+            _views[unit.Id].SetPosition(PositioningView.Position(unit, _layout), unit);
+        Physics2D.SyncTransforms();
+        BeginSword();
+        _drag.MovePointer(-1, ScreenSlot("back1"));
+        Assert.AreEqual("back1", _drag.CandidateSlot);
+        Assert.AreEqual("front1", _engine.Players[0].SlotId);
+        _drag.EndPointer(-1, ScreenSlot("back1"));
+        _drag.AdvanceSettlement(1f);
+        AssertPosition("sword", "back1");
+        Assert.AreEqual(1, _changes);
+    }
+
+    [Test]
     public void DragMovesWholeViewWithHud_ButNotCoreSlot_AndRaisesRenderGroup()
     {
         var source = ScreenSlot("front1");
         var view = _views["sword"];
-        var hpOffset = view.transform.Find("HpText").localPosition;
+        var hpOffset = view.transform.Find("Hud/HpText").localPosition;
         var artScale = view.transform.Find("Art").localScale;
         Assert.IsTrue(_drag.BeginPointer(-1, source, false));
         _drag.MovePointer(-1, ScreenSlot("back1"));
@@ -99,7 +116,7 @@ public class FormationDragTests
         var destination = PositioningView.Position(Team.Player, "back1", _layout);
         destination.z = PositioningView.Position(Team.Player, "front1", _layout).z;
         Assert.That(Vector3.Distance(view.transform.position, destination), Is.LessThan(0.001f));
-        Assert.AreEqual(hpOffset, view.transform.Find("HpText").localPosition);
+        Assert.AreEqual(hpOffset, view.transform.Find("Hud/HpText").localPosition);
         Assert.IsTrue(view.GetComponent<SortingGroup>().enabled);
         Assert.Greater(view.transform.Find("Art").localScale.x, artScale.x);
         Assert.AreEqual("松手放置", _slots.Find("DropHint").GetComponent<TextMeshPro>().text);
@@ -135,10 +152,10 @@ public class FormationDragTests
         Assert.AreEqual(guardPosition, _views["guard"].transform.position);
         Assert.AreEqual("front2", _engine.Players[1].SlotId);
         Assert.AreEqual("松手交换", _slots.Find("DropHint").GetComponent<TextMeshPro>().text);
-        Assert.IsTrue(_views["guard"].transform.Find("HpText").GetComponent<Renderer>().forceRenderingOff);
-        Assert.IsTrue(_views["guard"].transform.Find("Label").GetComponent<Renderer>().forceRenderingOff);
+        Assert.IsTrue(_views["guard"].transform.Find("Hud/HpText").GetComponent<Renderer>().forceRenderingOff);
+        Assert.IsTrue(_views["guard"].transform.Find("Hud/Label").GetComponent<Renderer>().forceRenderingOff);
         Assert.Less(_views["guard"].transform.Find("Art").GetComponent<SpriteRenderer>().color.a, 0.5f);
-        Assert.IsFalse(_views["sword"].transform.Find("HpText").GetComponent<Renderer>().forceRenderingOff);
+        Assert.IsFalse(_views["sword"].transform.Find("Hud/HpText").GetComponent<Renderer>().forceRenderingOff);
         _drag.EndPointer(-1, ScreenSlot("front2") + Vector2.right * 12f);
         var swordStart = _views["sword"].transform.position;
         Assert.AreEqual("front2", _engine.Players[0].SlotId);
@@ -153,7 +170,7 @@ public class FormationDragTests
         _drag.AdvanceSettlement(0.10f);
         AssertPosition("sword", "front2");
         AssertPosition("guard", "front1");
-        Assert.IsFalse(_views["guard"].transform.Find("HpText").GetComponent<Renderer>().forceRenderingOff);
+        Assert.IsFalse(_views["guard"].transform.Find("Hud/HpText").GetComponent<Renderer>().forceRenderingOff);
         Assert.AreEqual(1f, _views["guard"].transform.Find("Art").GetComponent<SpriteRenderer>().color.a);
         Assert.AreEqual(1, _changes);
     }
@@ -213,7 +230,12 @@ public class FormationDragTests
     public void EnemyCannotBeDragged_AndEnemySideCannotBeDropTarget()
     {
         var enemy = _engine.Enemies[0];
-        Assert.IsFalse(_drag.BeginPointer(-1, ScreenWorld(_views[enemy.Id].transform.position), false));
+        var enemyPosition = _views[enemy.Id].transform.position;
+        Assert.IsTrue(_drag.BeginPointer(-1, ScreenWorld(enemyPosition), false));
+        _drag.MovePointer(-1, ScreenSlot("back1"));
+        Assert.IsFalse(_drag.IsDragging);
+        Assert.AreEqual(enemyPosition, _views[enemy.Id].transform.position);
+        _drag.EndPointer(-1, ScreenSlot("back1"));
         BeginSword();
         _drag.MovePointer(-1, ScreenWorld(_views[enemy.Id].transform.position));
         Assert.IsNull(_drag.CandidateSlot);
@@ -254,6 +276,10 @@ public class FormationDragTests
         AssertPosition("sword", "front1");
         Assert.IsFalse(_slots.gameObject.activeSelf);
         Assert.IsFalse(_drag.BeginPointer(-1, ScreenSlot("front1"), false));
+        _drag.MovePointer(-1, ScreenSlot("back1"));
+        Assert.IsFalse(_drag.IsDragging);
+        AssertPosition("sword", "front1");
+        _drag.EndPointer(-1, ScreenSlot("back1"));
         Assert.AreEqual(0, _changes);
     }
 
@@ -283,9 +309,9 @@ public class FormationDragTests
     {
         BeginSword();
         _drag.MovePointer(-1, ScreenSlot("front2"));
-        Assert.IsTrue(_views["guard"].transform.Find("HpText").GetComponent<Renderer>().forceRenderingOff);
+        Assert.IsTrue(_views["guard"].transform.Find("Hud/HpText").GetComponent<Renderer>().forceRenderingOff);
         _drag.MovePointer(-1, ScreenSlot("back1"));
-        Assert.IsFalse(_views["guard"].transform.Find("HpText").GetComponent<Renderer>().forceRenderingOff);
+        Assert.IsFalse(_views["guard"].transform.Find("Hud/HpText").GetComponent<Renderer>().forceRenderingOff);
         Assert.AreEqual(1f, _views["guard"].transform.Find("Art").GetComponent<SpriteRenderer>().color.a);
         AssertPosition("guard", "front2");
         _drag.CancelAndSnap();
@@ -320,6 +346,105 @@ public class FormationDragTests
         _drag.Configure(_camera, null, _layout, _views, _slots, null);
         Assert.IsFalse(_slots.gameObject.activeSelf);
         Assert.IsFalse(_drag.BeginPointer(-1, ScreenSlot("front1"), false), "配置失败/重建期间不持有旧战斗输入");
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void SmallMouseOrTouchTapInspectsOnce_WithoutMovingFormation(bool touch)
+    {
+        int callbacks = 0;
+        string inspected = null;
+        _drag.OnInspect = id => { callbacks++; inspected = id; };
+        var source = ScreenSlot("front1");
+        Assert.IsTrue(_drag.BeginPointer(7, source, touch));
+        _drag.MovePointer(7, source + Vector2.right * (_drag.DragThreshold * 0.4f));
+        _drag.EndPointer(8, source);
+        Assert.AreEqual(0, callbacks);
+        _drag.EndPointer(7, source);
+        _drag.EndPointer(7, source);
+        Assert.AreEqual(1, callbacks);
+        Assert.AreEqual("sword", inspected);
+        AssertPosition("sword", "front1");
+        Assert.AreEqual(0, _changes);
+    }
+
+    [Test]
+    public void DragCancelAndMovedEnemyGestureNeverOpenInspection()
+    {
+        int opens = 0;
+        int drags = 0;
+        _drag.OnInspect = id => { if (id != null) opens++; };
+        _drag.OnDragStarted = () => drags++;
+        BeginSword();
+        _drag.EndPointer(-1, ScreenSlot("back1"));
+        _drag.AdvanceSettlement(1f);
+        Assert.AreEqual(0, opens);
+        Assert.AreEqual(1, drags);
+        Physics2D.SyncTransforms();
+        Assert.IsTrue(_drag.BeginPointer(-1, ScreenSlot("back1"), false));
+        _drag.EndPointer(-1, ScreenSlot("back1"), true);
+        Assert.AreEqual(0, opens);
+        var enemy = _engine.Enemies[0];
+        var point = ScreenWorld(_views[enemy.Id].transform.position);
+        Assert.IsTrue(_drag.BeginPointer(-1, point, false));
+        _drag.MovePointer(-1, point + Vector2.right * 100f);
+        _drag.EndPointer(-1, point);
+        Assert.AreEqual(0, opens);
+    }
+
+    [Test]
+    public void EnemySetupTapInspects_ButNeitherTeamCanInspectDuringBattle()
+    {
+        string inspected = null;
+        _drag.OnInspect = id => inspected = id;
+        var enemy = _engine.Enemies[0];
+        var enemyPoint = ScreenWorld(_views[enemy.Id].transform.position);
+        Assert.IsTrue(_drag.BeginPointer(-1, enemyPoint, false));
+        _drag.EndPointer(-1, enemyPoint);
+        Assert.AreEqual(enemy.Id, inspected);
+        _engine.StartBattle();
+        inspected = "unchanged";
+        Assert.IsFalse(_drag.BeginPointer(-1, ScreenSlot("front1"), false));
+        Assert.IsFalse(_drag.BeginPointer(7, enemyPoint, true));
+        _drag.RefreshAvailability();
+        _drag.EndPointer(-1, ScreenSlot("front1"));
+        Assert.AreEqual("unchanged", inspected);
+        Assert.AreEqual(BattleFlow.Resolving, _engine.Flow);
+        Assert.IsFalse(_drag.IsDragging);
+        Assert.AreEqual(0, _changes);
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void SetupGestureReleasedAfterBattleStartsNeverOpensInspection(bool enemy)
+    {
+        int callbacks = 0;
+        _drag.OnInspect = id => callbacks++;
+        string id = enemy ? _engine.Enemies[0].Id : "sword";
+        Vector2 point = ScreenWorld(_views[id].transform.position);
+        Assert.IsTrue(_drag.BeginPointer(7, point, true));
+        _engine.StartBattle();
+        _drag.EndPointer(7, point);
+        Assert.AreEqual(0, callbacks);
+        Assert.IsFalse(_drag.IsDragging);
+        Assert.IsFalse(_drag.IsSettling);
+    }
+
+    [Test]
+    public void MovingBattleArtCannotOpenInspectionOrInterruptAnimation()
+    {
+        _engine.StartBattle();
+        var art = _views["sword"].transform.Find("Art").GetComponent<SpriteRenderer>();
+        art.transform.localPosition = new Vector3(1.5f, 0.5f, 0f);
+        var position = art.transform.localPosition;
+        string inspected = null;
+        _drag.OnInspect = id => inspected = id;
+        var point = ScreenWorld(art.bounds.center);
+        Assert.IsFalse(_drag.BeginPointer(-1, point, false));
+        _drag.EndPointer(-1, point);
+        Assert.IsNull(inspected);
+        Assert.AreEqual(position, art.transform.localPosition, "战中点击不能打断近战位移动画");
+        Assert.AreEqual(0, _changes);
     }
 
     private void BeginSword() => Assert.IsTrue(_drag.BeginPointer(-1, ScreenSlot("front1"), false));

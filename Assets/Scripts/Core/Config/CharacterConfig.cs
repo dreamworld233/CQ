@@ -31,6 +31,7 @@ namespace CQ.Core.Config
     {
         public string id;
         public string name;
+        public string element;
         public int maxHp;
         public int baseAttack;
         public int baseDefense;

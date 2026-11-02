@@ -29,6 +29,7 @@ public class ConfigLoaderTests
         foreach (var unit in all)
         {
             Assert.IsNull(ConfigValidator.ValidateCharacter(unit), unit.id);
+            Assert.IsTrue(CharacterElements.IsValid(unit.element), unit.id + " 缺少五行分类");
             CollectionAssert.AreEquivalent(new[] { "basic", "special", "ult", "passive" }, unit.skills.Select(s => s.type));
             Assert.IsTrue(unit.skills.All(s => s.effects != null && s.effects.Count > 0));
             Assert.AreEqual(20, unit.initialEnergy);

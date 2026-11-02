@@ -10,8 +10,10 @@ namespace CQ.Runtime
         public float teamGap = 2.8f;
         public float arenaShift = 0f;
         public float baseOffset = 1.5f;
+        public float verticalShift = 1f;
         public float frontY = 0f;
         public float backY = 0f;
+        [NonSerialized] public float setupSpread;
     }
 
     /// <summary>Mirrored two-column formations: player left, enemy right, fronts toward center.</summary>
@@ -26,8 +28,8 @@ namespace CQ.Runtime
             bool front = Formation.RowOf(slotId) == "front";
             int index = slotId[slotId.Length - 1] - '1';
             float side = team == Team.Player ? -1f : 1f;
-            float x = layout.arenaShift + side * (layout.baseOffset + (front ? 0f : 2.5f));
-            float y = (front ? layout.frontY : layout.backY) + ((front ? 0.5f : 1f) - index) * layout.teamGap;
+            float x = layout.arenaShift + side * (layout.baseOffset + layout.setupSpread + (front ? 0f : 2.5f));
+            float y = layout.verticalShift + (front ? layout.frontY : layout.backY) + ((front ? 0.5f : 1f) - index) * layout.teamGap;
             return new Vector3(x, y, front ? -0.6f : 0.4f);
         }
     }

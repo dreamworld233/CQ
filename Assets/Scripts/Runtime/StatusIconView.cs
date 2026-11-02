@@ -4,7 +4,7 @@ using UnityEngine;
 
 namespace CQ.Runtime
 {
-    /// <summary>头顶状态格：剑/盾/眩晕星，正负色底；角标为剩余个人行动次数，常驻用小菱形。</summary>
+    /// <summary>脚下HUD状态格：剑/盾/眩晕星，正负色底；角标为剩余个人行动次数，常驻用小菱形。</summary>
     public sealed class StatusIconView : MonoBehaviour
     {
         public static readonly Color PositiveColor = new Color(0.72f, 0.16f, 0.25f);
@@ -23,7 +23,7 @@ namespace CQ.Runtime
         {
             var go = new GameObject("Status_" + type);
             go.transform.SetParent(parent, false);
-            go.transform.localPosition = new Vector3(-0.7f + index * 0.49f, 1.55f, 0f);
+            go.transform.localPosition = new Vector3(-0.7f + index * 0.49f, -0.88f, 0f);
             var view = go.AddComponent<StatusIconView>();
             view.Type = type;
             var border = view.MakeSprite("Border", UnitView.WhiteSprite(), new Color(0.03f, 0.05f, 0.08f), 45);
@@ -41,7 +41,7 @@ namespace CQ.Runtime
             permanent.transform.localScale = new Vector3(0.09f, 0.09f, 1f);
             permanent.transform.localRotation = Quaternion.Euler(0f, 0f, 45f);
             view._permanent = permanent.gameObject;
-            view._detail = TmpKit.MakeWorldText(go.transform, "Detail", new Vector3(0.7f - index * 0.49f, 0.43f, 0f),
+            view._detail = TmpKit.MakeWorldText(go.transform, "Detail", new Vector3(0.7f - index * 0.49f, 3.05f, 0f),
                 UiKit.FontBold, 0.22f, Color.white, 70);
             TmpKit.SetOutline(view._detail, Color.black, 0.3f);
             view._detail.gameObject.SetActive(false);
@@ -53,8 +53,8 @@ namespace CQ.Runtime
         public void SetSlot(int index)
         {
             float x = -0.7f + index * 0.49f;
-            transform.localPosition = new Vector3(x, 1.55f, 0f);
-            _detail.transform.localPosition = new Vector3(-x, 0.43f, 0f);
+            transform.localPosition = new Vector3(x, -0.88f, 0f);
+            _detail.transform.localPosition = new Vector3(-x, 3.05f, 0f);
         }
 
         public void Refresh(StatusEffect status)

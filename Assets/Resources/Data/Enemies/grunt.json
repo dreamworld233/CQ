@@ -1,6 +1,7 @@
 {
   "id": "grunt",
   "name": "杂兵",
+  "element": "wood",
   "maxHp": 350,
   "baseAttack": 40,
   "baseDefense": 10,
