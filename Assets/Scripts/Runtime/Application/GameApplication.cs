@@ -27,6 +27,7 @@ namespace CQ.Runtime.App
         private Scene _content;
         private Scene _bootstrap;
         private MainMenuView _menu;
+        private Camera _transitionCamera;
         private string _startupWarning;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -53,12 +54,24 @@ namespace CQ.Runtime.App
             input.transform.SetParent(transform, false);
             Overlay = gameObject.AddComponent<ApplicationOverlay>();
             Overlay.Build();
+            BuildTransitionCamera();
             Store = new LocalSaveStore(SaveRoot());
             var settings = Store.ReadSettings();
             Settings = settings.CanLoad ? settings.Data : UserSettings.Defaults();
             if (settings.Status != SaveStatus.Empty && settings.Status != SaveStatus.Ready)
                 _startupWarning = settings.CanLoad ? settings.Message : "设置无法读取，暂用默认设置。原文件尚未覆盖。\n" + settings.Message;
             ApplyAudio();
+        }
+
+        private void BuildTransitionCamera()
+        {
+            // Overlay画布不能代替Camera；旧场景卸载后仍需渲染，避免Display无摄像机提示。
+            _transitionCamera = new GameObject("TransitionCamera", typeof(Camera)).GetComponent<Camera>();
+            _transitionCamera.transform.SetParent(transform, false);
+            _transitionCamera.clearFlags = CameraClearFlags.SolidColor;
+            _transitionCamera.backgroundColor = AppUi.Background;
+            _transitionCamera.cullingMask = 0;
+            _transitionCamera.depth = -100f;
         }
 
         private static string SaveRoot()
@@ -192,6 +205,7 @@ namespace CQ.Runtime.App
 
         private IEnumerator SwitchContent(string target)
         {
+            _transitionCamera.enabled = true;
             Overlay.CloseModal();
             yield return Overlay.Fade(true, target == BattleScene ? "正在准备战斗…" : "正在返回主菜单…");
             if (!Application.CanStreamedLevelBeLoaded(target))
@@ -246,6 +260,7 @@ namespace CQ.Runtime.App
             yield return null;
             Canvas.ForceUpdateCanvases();
             yield return Overlay.Fade(false);
+            _transitionCamera.enabled = false;
             Busy = false;
             if (_startupWarning != null)
             {

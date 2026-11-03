@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using CQ.Runtime.Persistence;
 using TMPro;
 using UnityEngine;
@@ -12,7 +11,6 @@ namespace CQ.Runtime.App
         private GameApplication _app;
         private GameObject _home;
         private GameObject _slots;
-        private Button _continue;
         private TextMeshProUGUI _slotTitle;
         private TextMeshProUGUI _slotHint;
         private TMP_InputField _name;
@@ -40,11 +38,10 @@ namespace CQ.Runtime.App
             _home.transform.SetParent(body, false);
             AppUi.Place((RectTransform)_home.transform, Vector2.zero, new Vector2(1000f, 820f));
             AppUi.Text(_home.transform, "Welcome", "旅程从这里开始", 44, new Vector2(0f, 295f), new Vector2(720f, 90f), AppUi.Accent);
-            _continue = AppUi.MakeButton(_home.transform, "ContinueGame", "继续游戏", new Vector2(0f, 150f), new Vector2(650f, 82f), Continue);
-            AppUi.MakeButton(_home.transform, "NewGame", "新建游戏", new Vector2(0f, 40f), new Vector2(650f, 82f), () => ShowSlots(true));
-            AppUi.MakeButton(_home.transform, "LoadGame", "加载存档", new Vector2(0f, -70f), new Vector2(650f, 82f), () => ShowSlots(false));
-            AppUi.MakeButton(_home.transform, "Settings", "设置", new Vector2(-170f, -190f), new Vector2(310f, 75f), () => _app.Overlay.ShowSettings(_app.Settings));
-            AppUi.MakeButton(_home.transform, "Quit", "退出游戏", new Vector2(170f, -190f), new Vector2(310f, 75f), _app.Quit);
+            AppUi.MakeButton(_home.transform, "NewGame", "新建游戏", new Vector2(0f, 115f), new Vector2(650f, 82f), () => ShowSlots(true));
+            AppUi.MakeButton(_home.transform, "LoadGame", "加载存档", new Vector2(0f, 5f), new Vector2(650f, 82f), () => ShowSlots(false));
+            AppUi.MakeButton(_home.transform, "Settings", "设置", new Vector2(-170f, -115f), new Vector2(310f, 75f), () => _app.Overlay.ShowSettings(_app.Settings));
+            AppUi.MakeButton(_home.transform, "Quit", "退出游戏", new Vector2(170f, -115f), new Vector2(310f, 75f), _app.Quit);
             AppUi.Text(_home.transform, "SaveHint", "在布阵、开战与结算节点保存。\n加载后回到战前准备，不恢复战斗中途。", 23,
                 new Vector2(0f, -320f), new Vector2(720f, 90f), AppUi.Secondary, true);
             BuildSlots(body);
@@ -108,11 +105,9 @@ namespace CQ.Runtime.App
 
         public void RefreshSlots()
         {
-            bool any = false;
             for (int i = 0; i < LocalSaveStore.SlotCount; i++)
             {
                 var read = _app.Store.ReadSlot(i);
-                any |= read.CanLoad;
                 string detail;
                 if (read.CanLoad)
                 {
@@ -126,15 +121,6 @@ namespace CQ.Runtime.App
                 _primary[i].interactable = _creating ? read.Status != SaveStatus.IoError : read.CanLoad;
                 _delete[i].gameObject.SetActive(read.Status != SaveStatus.Empty);
             }
-            _continue.interactable = any;
-        }
-
-        private void Continue()
-        {
-            var slot = Enumerable.Range(0, LocalSaveStore.SlotCount).Select(index => new { index, read = _app.Store.ReadSlot(index) })
-                .Where(item => item.read.CanLoad).OrderByDescending(item => item.read.Data.savedUtcTicks).FirstOrDefault();
-            if (slot != null) _app.EnterSlot(slot.index);
-            else RefreshSlots();
         }
 
         public void Back()

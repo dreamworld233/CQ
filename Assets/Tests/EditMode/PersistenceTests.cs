@@ -278,6 +278,94 @@ public sealed class PersistenceTests
         Assert.IsFalse(_store.WriteSlot(1, Save(), false, out _));
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void MenuRequiresExplicitSlotSelection_InsteadOfContinuingLatestSave(bool hasSaves)
+    {
+        if (hasSaves)
+        {
+            var older = Save("昨天的旅程");
+            var newer = Save("另一段旅程");
+            newer.savedUtcTicks += TimeSpan.TicksPerHour;
+            Assert.IsTrue(_store.WriteSlot(0, older, true, out _));
+            Assert.IsTrue(_store.WriteSlot(1, newer, true, out _));
+        }
+        var appRoot = new GameObject("InactiveApplication");
+        appRoot.SetActive(false);
+        var menuRoot = new GameObject("MenuTest");
+        try
+        {
+            var app = appRoot.AddComponent<GameApplication>();
+            typeof(GameApplication).GetProperty("Store").SetValue(app, _store);
+            var menu = menuRoot.AddComponent<MainMenuView>();
+            menu.Build(app);
+            var home = menuRoot.GetComponentsInChildren<Transform>(true).Single(item => item.name == "Home");
+            var buttons = home.GetComponentsInChildren<UnityEngine.UI.Button>();
+            CollectionAssert.AreEquivalent(new[] { "NewGame", "LoadGame", "Settings", "Quit" }, buttons.Select(button => button.name));
+            buttons.Single(button => button.name == "LoadGame").onClick.Invoke();
+            Assert.IsFalse(home.gameObject.activeSelf);
+            Assert.IsNull(app.Session, "打开加载列表不能自动选择最新存档");
+            Assert.IsFalse(app.Busy);
+            var slots = menuRoot.GetComponentsInChildren<Transform>(true).Single(item => item.name == "SaveSlots");
+            Assert.IsTrue(slots.gameObject.activeSelf);
+            var actions = slots.GetComponentsInChildren<UnityEngine.UI.Button>().Where(button => button.name == "SlotAction").ToArray();
+            Assert.AreEqual(3, actions.Length);
+            Assert.AreEqual(hasSaves, actions[0].interactable);
+            Assert.AreEqual(hasSaves, actions[1].interactable);
+            Assert.IsFalse(actions[2].interactable);
+            if (hasSaves)
+            {
+                var descriptions = slots.GetComponentsInChildren<TMPro.TextMeshProUGUI>().Where(text => text.name == "SlotDescription").ToArray();
+                StringAssert.Contains("昨天的旅程", descriptions[0].text);
+                StringAssert.Contains("另一段旅程", descriptions[1].text);
+                StringAssert.Contains("第 1 关", descriptions[0].text);
+                StringAssert.Contains(new DateTime(_store.ReadSlot(0).Data.savedUtcTicks, DateTimeKind.Utc).ToLocalTime().ToString("yyyy-MM-dd HH:mm"), descriptions[0].text);
+            }
+            menu.Back();
+            Assert.IsTrue(home.gameObject.activeSelf);
+            Assert.IsFalse(slots.gameObject.activeSelf);
+        }
+        finally
+        {
+            UnityEngine.Object.DestroyImmediate(menuRoot);
+            UnityEngine.Object.DestroyImmediate(appRoot);
+        }
+    }
+
+    [Test]
+    public void TransitionCameraBelongsToApplication_AndIsReenabledBeforeFadeOrUnload()
+    {
+        var root = new GameObject("InactiveApplication");
+        root.SetActive(false);
+        try
+        {
+            var app = root.AddComponent<GameApplication>();
+            var overlay = root.AddComponent<ApplicationOverlay>();
+            overlay.Build();
+            typeof(GameApplication).GetProperty("Overlay").SetValue(app, overlay);
+            var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            typeof(GameApplication).GetMethod("BuildTransitionCamera", flags).Invoke(app, null);
+            var camera = root.GetComponentInChildren<Camera>(true);
+            Assert.IsNotNull(camera);
+            Assert.AreSame(root.transform, camera.transform.parent);
+            Assert.IsTrue(camera.enabled, "首次菜单加载前也必须有摄像机兜底");
+            Assert.AreEqual(CameraClearFlags.SolidColor, camera.clearFlags);
+            Assert.AreEqual(0, camera.cullingMask);
+            Assert.Less(camera.depth, 0f);
+            Assert.AreEqual(new Rect(0f, 0f, 1f, 1f), camera.rect);
+            Assert.AreEqual(0, camera.targetDisplay);
+            Assert.IsNull(camera.targetTexture);
+            Assert.IsFalse(camera.CompareTag("MainCamera"), "不能被战斗Camera.main复用");
+            Assert.IsNull(camera.GetComponent<AudioListener>(), "不能引入重复音频监听器");
+            camera.enabled = false;
+            var transition = (System.Collections.IEnumerator)typeof(GameApplication).GetMethod("SwitchContent", flags)
+                .Invoke(app, new object[] { GameApplication.MenuScene });
+            Assert.IsTrue(transition.MoveNext());
+            Assert.IsTrue(camera.enabled, "转场第一步必须先启用兜底，不等待旧场景卸载");
+        }
+        finally { UnityEngine.Object.DestroyImmediate(root); }
+    }
+
     [Test]
     public void BootstrapAndContentScenesAreEnabledInBuildOrder()
     {
